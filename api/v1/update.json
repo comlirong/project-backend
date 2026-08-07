@@ -1,8 +1,8 @@
 {
-  "versionCode": 451,
-  "url": "https://github.com/comlirong/project-backend/releases/download/v451/libmain.so",
-  "message": "版本更新",
-  "force": true,
+  "versionCode": 1001,
+  "url": "https://github.com/comlirong/project-backend/releases/download/v1001/libmain.so",
+  "message": "该版本任为测试版本，无任何旁路n请勿使用大号",
+  "force": false,
   "sha256": "e22036174eaa9bccba815b14c6f2c2c02b43d5b72c24f842e4c1958aad851c9d",
   "minOsVersion": 21
 }
