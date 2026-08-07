@@ -1,0 +1,7 @@
+{
+  "versionCode": 2,
+  "url": "https://github.com/yourname/project-backend/releases/download/v2/libmain.so",
+  "message": "1. 修复启动崩溃\n2. 优化渲染性能",
+  "force": false
+}
+
