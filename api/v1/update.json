@@ -1,8 +1,8 @@
 {
   "versionCode": 101,
   "url": "https://github.com/comlirong/project-backend/releases/download/v101/libmain.so",
-  "message": "1. 修复启动崩溃n2. 优化渲染性能",
-  "force": true,
-  "sha256": "328886ec0a53d4dfe6f9d3cc956ac471b86c7367907bbceadad502e7aadd8676",
+  "message": "版本更新",
+  "force": false,
+  "sha256": "e22036174eaa9bccba815b14c6f2c2c02b43d5b72c24f842e4c1958aad851c9d",
   "minOsVersion": 21
 }
