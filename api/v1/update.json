@@ -1,7 +1,8 @@
 {
-  "versionCode": 2,
-  "url": "https://github.com/yourname/project-backend/releases/download/v2/libmain.so",
-  "message": "1. 修复启动崩溃\n2. 优化渲染性能",
-  "force": false
+  "versionCode": 101,
+  "url": "https://github.com/comlirong/project-backend/releases/download/v101/libmain.so",
+  "message": "1. 修复启动崩溃n2. 优化渲染性能",
+  "force": true,
+  "sha256": "328886ec0a53d4dfe6f9d3cc956ac471b86c7367907bbceadad502e7aadd8676",
+  "minOsVersion": 21
 }
-
