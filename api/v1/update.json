@@ -1,8 +1,8 @@
 {
-  "versionCode": 1000101,
-  "url": "https://github.com/comlirong/project-backend/releases/download/v1000101/libmain.so",
+  "versionCode": 1000102,
+  "url": "https://github.com/comlirong/project-backend/releases/download/v1000102/libmain.so",
   "message": "新增功能请自行体验",
   "force": false,
-  "sha256": "3efa17b74d3a14f41ef352ac237ee1234b7ffe50e3352364113d52cbe7a34633",
+  "sha256": "83ad52ded7e1b95400d9b4c2d0c39b310f10dfbef86bf0a8750095a84dad8733",
   "minOsVersion": 21
 }
