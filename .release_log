@@ -92,3 +92,4 @@
 [2026-08-16T12:32:39+08:00] RELEASE v1000095 | file=./assets/libs/libmain.so | sha256=1a1637e082534f4f262d3a377261968e2b752d12f1bbecf9dcec096e3438c779 | force=false
 [2026-08-16T14:18:51+08:00] RELEASE v1000096 | file=./assets/libs/libmain.so | sha256=a0d758714222ef914ef1df9afd09ddda5e1fc3412ded91f44dd7a5b2ebb16e6f | force=false
 [2026-08-17T02:14:46+08:00] RELEASE v1000099 | file=./assets/libs/libmain.so | sha256=fcb17aee555b681f64028f01c4b6e0449b4e3b7ff302c71b527eafa047c47edb | force=false
+[2026-08-17T02:24:14+08:00] RELEASE v1000100 | file=./assets/libs/libmain.so | sha256=51c0fe7c47d78422f7faf7e6e2722c924fe50f118682a64b015915345c6389d1 | force=false
