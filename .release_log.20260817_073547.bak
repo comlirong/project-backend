@@ -1,3 +1,4 @@
+[2026-08-10T07:10:45+08:00] RELEASE v1000005 | file=./assets/libs/libmain.so | sha256=61241b152655a8a3ea3ff985decc84c929760da41db014dad8b8996a859a5e8f | force=false
 [2026-08-10T07:24:44+08:00] RELEASE v1000005 | file=./assets/libs/libmain.so | sha256=bf6feba538f11a063b3325abb6de1ce89f322bd35ed0e6e5c707b3c1f71324b1 | force=false
 [2026-08-10T07:25:55+08:00] NOTIFY 20260808220046 | title=通知 | force=false
 [2026-08-10T07:40:44+08:00] RELEASE v1000006 | file=./assets/libs/libmain.so | sha256=a058911c6345cd7809704f9ce00a8c6d31f559754c8ba3c9f39fa365ddf75ee8 | force=false
