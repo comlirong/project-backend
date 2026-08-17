@@ -1,8 +1,8 @@
 {
-  "versionCode": 1000114,
-  "url": "https://github.com/comlirong/project-backend/releases/download/v1000114/libmain.so",
+  "versionCode": 1000115,
+  "url": "https://github.com/comlirong/project-backend/releases/download/v1000115/libmain.so",
   "message": "更新测试",
-  "force": true,
-  "sha256": "ebc08d7eb8db9e0d6e537d30765e83bf4df519e3c2186b1d369fcc648128c4e9",
+  "force": false,
+  "sha256": "51c79c7face3283048de6cdb4858e7a208567c1743c25c48f5df0778fef9a58d",
   "minOsVersion": 21
 }
