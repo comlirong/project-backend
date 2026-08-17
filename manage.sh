@@ -224,7 +224,7 @@ clean_old() {
     tags=$(git ls-remote --tags origin 'refs/tags/v*' 2>/dev/null | awk '{print $2}' | sed 's|refs/tags/||' | grep -E '^v[0-9]+$' | sort -Vr)
     [[ -z "$tags" ]] && { warn "无远程标签"; return; }
 
-    local to_delete=""
+    local tags_to_delete=()
     local count=0
     while IFS= read -r tag; do
         [[ -z "$tag" || "$tag" == "$keep_tag" ]] && continue
@@ -233,18 +233,25 @@ clean_old() {
             ok "保留: $tag"
             continue
         fi
-        to_delete="$to_delete $tag"
+        tags_to_delete+=("$tag")
     done <<< "$tags"
 
-    [[ -z "$to_delete" ]] && { ok "无需清理"; return; }
+    [[ ${#tags_to_delete[@]} -eq 0 ]] && { ok "无需清理"; return; }
 
-    info "将删除:$to_delete"
+    info "将删除 ${#tags_to_delete[@]} 个版本:"
+    for tag in "${tags_to_delete[@]}"; do
+        data "$tag"
+    done
     echo ""
     read -rp "确认删除? [y/N]: " confirm
     [[ "$confirm" =~ ^[Yy]$ ]] || { ok "已取消"; return; }
 
-    for tag in $to_delete; do
-        gh release delete "$tag" --repo "$REPO" --yes 2>/dev/null && ok "删除 release: $tag" || warn "release 删除失败: $tag"
+    for tag in "${tags_to_delete[@]}"; do
+        if gh release view "$tag" --repo "$REPO" &>/dev/null; then
+            gh release delete "$tag" --repo "$REPO" --yes 2>/dev/null && ok "删除 release: $tag" || warn "release 删除失败: $tag"
+        else
+            debug "release $tag 不存在，跳过"
+        fi
         git push origin ":refs/tags/$tag" 2>/dev/null && ok "删除 tag: $tag" || warn "tag 删除失败: $tag"
     done
 }
