@@ -107,3 +107,4 @@
 [2026-08-17T08:59:08+08:00] NOTIFY 20260808220050 | title=通知 | force=false
 [2026-08-17T09:01:55+08:00] RELEASE v1000112 | file=./assets/libs/libmain.so | sha256=29518b75b339e0b05215e088c60857d6f85368ed9e8145539144f9081c9309ac | force=false
 [2026-08-17T09:02:22+08:00] RELEASE v1000113 | file=./assets/libs/libmain.so | sha256=29518b75b339e0b05215e088c60857d6f85368ed9e8145539144f9081c9309ac | force=true
+[2026-08-17T10:47:48+08:00] RELEASE v1000114 | file=./assets/libs/libmain.so | sha256=ebc08d7eb8db9e0d6e537d30765e83bf4df519e3c2186b1d369fcc648128c4e9 | force=true
