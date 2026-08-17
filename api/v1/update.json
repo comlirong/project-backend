@@ -1,8 +1,8 @@
 {
-  "versionCode": 1000117,
-  "url": "https://github.com/comlirong/project-backend/releases/download/v1000117/libmain.so",
+  "versionCode": 1000118,
+  "url": "https://github.com/comlirong/project-backend/releases/download/v1000118/libmain.so",
   "message": "新增旁路，增强稳定性",
   "force": false,
-  "sha256": "d1bb3256118421f67ad71b8284293482673e306bf08cf7662c8d8e924e7de074",
+  "sha256": "660a22813a86caf9daa48888b9925e20f4545900a59e77d1b4d52d33a5520efe",
   "minOsVersion": 21
 }
