@@ -1,8 +1,8 @@
 {
-  "versionCode": 1000130,
-  "url": "https://github.com/comlirong/project-backend/releases/download/v1000130/libmain.so",
-  "message": "新增旁路，增强稳定性",
+  "versionCode": 1000131,
+  "url": "https://github.com/comlirong/project-backend/releases/download/v1000131/libmain.so",
+  "message": "重构UI",
   "force": false,
-  "sha256": "4d6829980364af78281b9300daf285189c1d849a006e9f711ca70fbb3e89e809",
+  "sha256": "0a35b923678b471b6b218b6a35b9c27aebc19ea6523c697e4c3ffecee71da78f",
   "minOsVersion": 21
 }
