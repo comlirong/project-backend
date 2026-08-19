@@ -1,8 +1,8 @@
 {
-  "versionCode": 1000137,
-  "url": "https://github.com/comlirong/project-backend/releases/download/v1000137/libmain.so",
+  "versionCode": 1000138,
+  "url": "https://github.com/comlirong/project-backend/releases/download/v1000138/libmain.so",
   "message": "重构了UI",
-  "force": false,
-  "sha256": "76839912ef1f6bbcf4a7f9d24b8d9199771443d10f54fd5117f8ea3c8d88a344",
+  "force": true,
+  "sha256": "fbc58c20362e6ef4ec0a539d03215085b014d1e3538a89db9b5c3e087354511a",
   "minOsVersion": 21
 }
