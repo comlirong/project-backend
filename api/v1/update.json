@@ -1,12 +1,12 @@
 {
-  "versionCode": 1000140,
-  "url": "https://github.com/comlirong/project-backend/releases/download/v1000140/libmain.so",
+  "versionCode": 1000141,
+  "url": "https://github.com/comlirong/project-backend/releases/download/v1000141/libmain.so",
   "message": {
-    "zh": "重构了UI",
-    "en": "Refactored UI",
-    "ru": "Переработан интерфейс"
+    "zh": "重构了 UI",
+    "en": "Redesigned the UI",
+    "ru": "Перестроен пользовательский интерфейс"
   },
   "force": true,
-  "sha256": "c6d4514a296a835c2d8be876dc126ed0c42621f77bdc53ec8e3b1b95908122",
+  "sha256": "289aa94959ee18b0f4024ec1f8e43b7382f1ff68c451e0725bc349cd8853c808",
   "minOsVersion": 21
 }
