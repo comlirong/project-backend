@@ -1,9 +1,7 @@
 #!/bin/bash
 # ==============================================================================
-# GitHub Backend Manager - Termux 专用版 (优化版 v2.0)
-# 功能: 版本发布、通知管理、备份恢复、GitHub Pages清理、本地文件上传
-# 用法: bash manage.sh              # 进入交互菜单
-#       bash manage.sh upload       # 一键上传本地JSON文件
+# GitHub Backend Manager - Termux 专用版 (优化版 v2.1)
+# 修复: 多语言默认值优先读取JSON文件中的对应语言值
 # ==============================================================================
 
 set -uo pipefail
@@ -189,7 +187,6 @@ json_validate() {
         python3 -c "import json; json.load(open('$file'))" 2>/dev/null && return 0
     fi
     
-    # 基础检查: 括号匹配
     local open close
     open=$(grep -o '{' "$file" | wc -l)
     close=$(grep -o '}' "$file" | wc -l)
@@ -429,7 +426,11 @@ cmd_status() {
     data "备份数: $(find "$BACKUP_DIR" -maxdepth 1 -type d -name 'backup_*' 2>/dev/null | wc -l) 个"
 }
 
-# ---------- 命令: release ----------
+# ==============================================================================
+# 修复核心: 多语言默认值优先读取JSON文件中的对应语言值
+# ==============================================================================
+
+# ---------- 命令: release (修复版) ----------
 cmd_release() {
     local vc="${1:-}"
     local so="${2:-}"
@@ -437,6 +438,14 @@ cmd_release() {
     local msg_en="${4:-}"
     local msg_ru="${5:-}"
     local force="${6:-}"
+
+    # 预读取现有JSON中的各语言值（作为默认值来源）
+    local last_zh="" last_en="" last_ru=""
+    if [[ -f "$API_DIR/update.json" ]]; then
+        last_zh=$(json_get_lang "$API_DIR/update.json" "message" "zh")
+        last_en=$(json_get_lang "$API_DIR/update.json" "message" "en")
+        last_ru=$(json_get_lang "$API_DIR/update.json" "message" "ru")
+    fi
 
     if [[ -z "$vc" ]]; then
         local sug
@@ -480,22 +489,21 @@ cmd_release() {
     fi
     [[ -f "$so" ]] || { error "so 文件不存在: $so"; return 1; }
 
+    # 修复: 各语言默认值优先读取JSON中对应语言的现有值
     if [[ -z "$msg_zh" ]]; then
-        local last_zh=""
-        [[ -f "$API_DIR/update.json" ]] && last_zh=$(json_get_lang "$API_DIR/update.json" "message" "zh")
         ask "更新说明(中文) [默认: ${last_zh:-版本更新}]: "
         read -r msg_zh
         [[ -z "$msg_zh" ]] && msg_zh="${last_zh:-版本更新}"
     fi
     if [[ -z "$msg_en" ]]; then
-        ask "更新说明(英文) [默认: $msg_zh]: "
+        ask "更新说明(英文) [默认: ${last_en:-$msg_zh}]: "
         read -r msg_en
-        [[ -z "$msg_en" ]] && msg_en="$msg_zh"
+        [[ -z "$msg_en" ]] && msg_en="${last_en:-$msg_zh}"
     fi
     if [[ -z "$msg_ru" ]]; then
-        ask "更新说明(俄文) [默认: $msg_en]: "
+        ask "更新说明(俄文) [默认: ${last_ru:-$msg_en}]: "
         read -r msg_ru
-        [[ -z "$msg_ru" ]] && msg_ru="$msg_en"
+        [[ -z "$msg_ru" ]] && msg_ru="${last_ru:-$msg_en}"
     fi
 
     if [[ -z "$force" ]]; then
@@ -553,7 +561,7 @@ cmd_release() {
     [[ "$AUTO_CLEAN" == "true" ]] && clean_old "$tag"
 }
 
-# ---------- 命令: notify ----------
+# ---------- 命令: notify (修复版) ----------
 cmd_notify() {
     local id="${1:-}"
     local title_zh="${2:-}"
@@ -564,6 +572,18 @@ cmd_notify() {
     local content_ru="${7:-}"
     local force="${8:-}"
 
+    # 预读取现有JSON中的各语言值（作为默认值来源）
+    local last_t_zh="" last_t_en="" last_t_ru=""
+    local last_c_zh="" last_c_en="" last_c_ru=""
+    if [[ -f "$API_DIR/notify.json" ]]; then
+        last_t_zh=$(json_get_lang "$API_DIR/notify.json" "title" "zh")
+        last_t_en=$(json_get_lang "$API_DIR/notify.json" "title" "en")
+        last_t_ru=$(json_get_lang "$API_DIR/notify.json" "title" "ru")
+        last_c_zh=$(json_get_lang "$API_DIR/notify.json" "content" "zh")
+        last_c_en=$(json_get_lang "$API_DIR/notify.json" "content" "en")
+        last_c_ru=$(json_get_lang "$API_DIR/notify.json" "content" "ru")
+    fi
+
     if [[ -z "$id" ]]; then
         local sug
         sug=$(suggest_notify_id)
@@ -572,34 +592,38 @@ cmd_notify() {
         [[ -z "$id" ]] && id="$sug"
     fi
 
+    # 修复: 标题各语言默认值优先读取JSON中对应语言的现有值
     if [[ -z "$title_zh" ]]; then
-        ask "通知标题(中文): "
+        ask "通知标题(中文) [默认: ${last_t_zh:-(无)}]: "
         read -r title_zh
+        [[ -z "$title_zh" ]] && title_zh="$last_t_zh"
     fi
     if [[ -z "$title_en" ]]; then
-        ask "通知标题(英文) [默认: $title_zh]: "
+        ask "通知标题(英文) [默认: ${last_t_en:-$title_zh}]: "
         read -r title_en
-        [[ -z "$title_en" ]] && title_en="$title_zh"
+        [[ -z "$title_en" ]] && title_en="${last_t_en:-$title_zh}"
     fi
     if [[ -z "$title_ru" ]]; then
-        ask "通知标题(俄文) [默认: $title_en]: "
+        ask "通知标题(俄文) [默认: ${last_t_ru:-$title_en}]: "
         read -r title_ru
-        [[ -z "$title_ru" ]] && title_ru="$title_en"
+        [[ -z "$title_ru" ]] && title_ru="${last_t_ru:-$title_en}"
     fi
 
+    # 修复: 内容各语言默认值优先读取JSON中对应语言的现有值
     if [[ -z "$content_zh" ]]; then
-        ask "通知内容(中文): "
+        ask "通知内容(中文) [默认: ${last_c_zh:-(无)}]: "
         read -r content_zh
+        [[ -z "$content_zh" ]] && content_zh="$last_c_zh"
     fi
     if [[ -z "$content_en" ]]; then
-        ask "通知内容(英文) [默认: $content_zh]: "
+        ask "通知内容(英文) [默认: ${last_c_en:-$content_zh}]: "
         read -r content_en
-        [[ -z "$content_en" ]] && content_en="$content_zh"
+        [[ -z "$content_en" ]] && content_en="${last_c_en:-$content_zh}"
     fi
     if [[ -z "$content_ru" ]]; then
-        ask "通知内容(俄文) [默认: $content_en]: "
+        ask "通知内容(俄文) [默认: ${last_c_ru:-$content_en}]: "
         read -r content_ru
-        [[ -z "$content_ru" ]] && content_ru="$content_en"
+        [[ -z "$content_ru" ]] && content_ru="${last_c_ru:-$content_en}"
     fi
 
     if [[ -z "$force" ]]; then
@@ -654,37 +678,33 @@ cmd_backup() {
 }
 
 # ==============================================================================
-# 新增: 本地文件一键上传功能
+# 本地文件一键上传功能
 # ==============================================================================
 
-# ---------- 命令: upload (核心新增) ----------
+# ---------- 命令: upload ----------
 cmd_upload() {
     local src_update="${1:-}"
     local src_notify="${2:-}"
-    local mode="${3:-both}"   # both|update|notify
+    local mode="${3:-both}"
 
     log "本地文件上传模式"
     info "支持直接上传本地编辑好的 update.json / notify.json"
     echo ""
 
-    # 自动发现候选文件
     local candidates=()
     [[ -f "$API_DIR/update.json" ]] && candidates+=("$API_DIR/update.json")
     [[ -f "$API_DIR/notify.json" ]] && candidates+=("$API_DIR/notify.json")
     [[ -f "./update.json" ]] && candidates+=("./update.json")
     [[ -f "./notify.json" ]] && candidates+=("./notify.json")
 
-    # 模式1: 命令行直接指定路径
     if [[ -n "$src_update" || -n "$src_notify" ]]; then
         info "使用命令行指定的文件路径"
         [[ -n "$src_update" && -f "$src_update" ]] || { error "指定的 update.json 不存在: $src_update"; return 1; }
         [[ -n "$src_notify" && -f "$src_notify" ]] || { error "指定的 notify.json 不存在: $src_notify"; return 1; }
         
-        # 如果只指定了一个，另一个保持原样
         [[ "$mode" == "both" || "$mode" == "update" ]] && cp "$src_update" "$API_DIR/update.json"
         [[ "$mode" == "both" || "$mode" == "notify" ]] && cp "$src_notify" "$API_DIR/notify.json"
         
-    # 模式2: 交互式选择
     else
         info "发现以下候选文件:"
         local i=1
@@ -714,7 +734,6 @@ cmd_upload() {
         
         [[ -f "$update_src" ]] || { error "文件不存在: $update_src"; return 1; }
         
-        # 询问是否同时上传 notify.json
         echo ""
         ask "是否同时上传 notify.json? [Y/n]: "
         local also_notify
@@ -740,34 +759,28 @@ cmd_upload() {
         src_notify="$notify_src"
     fi
 
-    # 验证JSON格式
     echo ""
     log "验证文件格式..."
     json_validate "$src_update" || return 1
     [[ -n "$src_notify" ]] && { json_validate "$src_notify" || return 1; }
     ok "JSON 格式验证通过"
 
-    # 预览内容
     echo ""
     info "文件预览:"
     data "update.json -> $(json_get "$src_update" "versionCode") | $(json_get_lang "$src_update" "message" "zh")"
     [[ -n "$src_notify" ]] && data "notify.json -> #$(json_get "$src_notify" "id") | $(json_get_lang "$src_notify" "title" "zh")"
 
-    # 备份现有文件
     echo ""
     local backup_path
     backup_path=$(backup_create "pre_upload")
     [[ $? -eq 0 ]] && info "已备份到: $(basename "$backup_path")"
 
-    # 确认上传
     echo ""
     confirm "确认上传并推送" || { ok "已取消"; return 0; }
 
-    # 执行复制
     cp "$src_update" "$API_DIR/update.json"
     [[ -n "$src_notify" ]] && cp "$src_notify" "$API_DIR/notify.json"
 
-    # Git 操作
     git add "$API_DIR/update.json" 2>/dev/null || true
     [[ -n "$src_notify" ]] && git add "$API_DIR/notify.json" 2>/dev/null || true
     
@@ -780,7 +793,6 @@ cmd_upload() {
     ok "上传完成!"
     info "文件已同步到: $API_DIR/"
     
-    # 可选: 清理旧版本
     if [[ "$AUTO_CLEAN" == "true" ]]; then
         local current_tag
         current_tag="v$(json_get "$API_DIR/update.json" "versionCode")"
@@ -788,7 +800,7 @@ cmd_upload() {
     fi
 }
 
-# ---------- 命令: sync (从远程拉取) ----------
+# ---------- 命令: sync ----------
 cmd_sync() {
     log "从远程同步 JSON 文件..."
     git fetch origin "$(current_branch)" 2>/dev/null || { warn "fetch 失败"; return 1; }
@@ -806,7 +818,7 @@ cmd_sync() {
     [[ "$changed" -eq 1 ]] && ok "同步完成" || info "本地已是最新"
 }
 
-# ---------- 命令: diff (对比本地与远程) ----------
+# ---------- 命令: diff ----------
 cmd_diff() {
     log "对比本地与远程差异..."
     git fetch origin "$(current_branch)" 2>/dev/null || { warn "fetch 失败"; return 1; }
@@ -1086,9 +1098,9 @@ show_menu() {
         echo "  [6] 初始化 (init)"
         echo "  [7] GitHub Pages 管理"
         echo "  ─────────────────────────"
-        echo "  [8] 上传本地JSON (upload)  ← 新增"
-        echo "  [9] 同步远程JSON (sync)    ← 新增"
-        echo "  [10] 对比差异 (diff)        ← 新增"
+        echo "  [8] 上传本地JSON (upload)"
+        echo "  [9] 同步远程JSON (sync)"
+        echo "  [10] 对比差异 (diff)"
         echo "  ─────────────────────────"
         echo "  [0] 退出"
         echo ""
@@ -1132,7 +1144,7 @@ show_menu() {
 # ---------- 帮助 ----------
 usage() {
     cat <<'EOF'
-GitHub Backend Manager - Termux 版 (v2.0)
+GitHub Backend Manager - Termux 版 (v2.1)
 
 用法:
     bash manage.sh              进入交互菜单
@@ -1150,9 +1162,9 @@ GitHub Backend Manager - Termux 版 (v2.0)
     backup [action]     备份管理 (list/create/restore)
     pages [sub]         GitHub Pages 关闭与清理
     
-    upload [update.json] [notify.json]   ← 新增: 一键上传本地JSON
-    sync                                 ← 新增: 从远程拉取JSON
-    diff                                 ← 新增: 对比本地与远程差异
+    upload [update.json] [notify.json]   一键上传本地JSON
+    sync                                 从远程拉取JSON
+    diff                                 对比本地与远程差异
 
 JSON 格式:
     update.json:  versionCode, url, message{zh,en,ru}, force, sha256, minOsVersion
@@ -1207,9 +1219,9 @@ main() {
         clean|c)    cmd_clean "${ARGS[@]}" ;;
         backup|b)   cmd_backup "${ARGS[@]}" ;;
         pages|p)    cmd_pages "${ARGS[@]}" ;;
-        upload|up)  cmd_upload "${ARGS[@]}" ;;      # 新增
-        sync|pull)  cmd_sync ;;                     # 新增
-        diff|d)     cmd_diff ;;                     # 新增
+        upload|up)  cmd_upload "${ARGS[@]}" ;;
+        sync|pull)  cmd_sync ;;
+        diff|d)     cmd_diff ;;
         help)       usage ;;
         *)          error "未知命令: $CMD"; usage ;;
     esac
