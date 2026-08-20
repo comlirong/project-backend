@@ -1,0 +1,12 @@
+{
+  "versionCode": 1000144,
+  "url": "https://github.com/comlirong/project-backend/releases/download/v1000144/libmain.so",
+  "message": {
+    "zh": "重构了 UI",
+    "en": "Refactored the UI",
+    "ru": " Переработал пользовательский интерфейс."
+  },
+  "force": true,
+  "sha256": "330f9dc81264edfc6f3dd5be43ee5c3473bf6f48538d51efa16061ab8dcdb09a",
+  "minOsVersion": 21
+}
