@@ -461,6 +461,314 @@ cmd_backup() {
     esac
 }
 
+# ---------- 命令: pages (GitHub Pages 关闭与清理) ----------
+# 说明:
+#   GitHub 官方未提供 "DELETE /pages" 接口，官方推荐的"删除站点"方式
+#   是把发布源(source)设为 None —— 即取消发布(unpublish)，站点 URL 随即失效。
+#   本命令在此基础上，额外提供: 删除 gh-pages 分支、清理历史 deployments 记录、
+#   删除工作区中残留的站点文件，做到尽可能彻底的清理。
+
+# 检查 gh 是否可用
+_pages_check_gh() {
+    command -v gh &>/dev/null && return 0
+    error "需要 gh CLI 才能管理 GitHub Pages"
+    info "安装: pkg install gh  或  apt install gh"
+    return 1
+}
+
+# 获取 Pages 站点信息 (成功输出 JSON，失败输出空)
+_pages_info() {
+    gh api "repos/$REPO/pages" --silent 2>/dev/null || true
+}
+
+# 显示 Pages 当前状态
+_pages_status() {
+    local info
+    info=$(_pages_info)
+    if [[ -z "$info" ]]; then
+        warn "GitHub Pages 当前未启用或无法访问 (404)"
+        return 1
+    fi
+    log "GitHub Pages 状态"
+    if [[ "$HAS_JQ" == "1" ]]; then
+        data "状态:     $(echo "$info" | jq -r '.status // "unknown"')"
+        data "URL:      $(echo "$info" | jq -r '.html_url // "N/A"')"
+        data "源分支:   $(echo "$info" | jq -r '.source.branch // "none"')"
+        data "源路径:   $(echo "$info" | jq -r '.source.path // "/"')"
+        data "CNAME:    $(echo "$info" | jq -r '.cname // "(无)"')"
+        data "HTTPS:    $(echo "$info" | jq -r '.https_enforced // false')"
+    else
+        data "原始响应: $info"
+    fi
+    return 0
+}
+
+# 关闭 (unpublish) Pages 站点 —— 把 source 设为 null
+_pages_disable() {
+    _pages_check_gh || return 1
+    local owner repo
+    owner=$(echo "$REPO" | cut -d/ -f1)
+    repo=$(echo "$REPO" | cut -d/ -f2)
+
+    log "关闭 GitHub Pages (DELETE /repos/$owner/$repo/pages)..."
+    
+    local resp
+    resp=$(gh api --method DELETE \
+        -H "Accept: application/vnd.github+json" \
+        "/repos/$owner/$repo/pages" 2>&1)
+    local rc=$?
+
+    if [[ $rc -eq 0 ]]; then
+        ok "GitHub Pages 已关闭 (站点资源已删除，仓库保留)"
+    elif echo "$resp" | grep -q '"status":"404"'; then
+        ok "Pages 站点本来就不存在，无需关闭"
+    elif echo "$resp" | grep -q '"status":"409"'; then
+        warn "冲突: 可能站点正在构建中，稍后重试"
+        return 1
+    else
+        error "关闭失败 (rc=$rc): $resp"
+        return 1
+    fi
+}
+
+# 删除 gh-pages 分支 (本地+远程)
+_pages_remove_branch() {
+    local branch="${1:-gh-pages}"
+    info "检查分支: $branch"
+    local remote_exists=0
+    git ls-remote --heads origin "$branch" 2>/dev/null | grep -q "$branch" && remote_exists=1
+
+    if [[ "$remote_exists" -eq 0 ]]; then
+        info "远程分支 $branch 不存在，跳过"
+    else
+        warn "将删除远程分支: $branch"
+        read -rp "确认删除远程分支 $branch? [y/N]: " c
+        if [[ "$c" =~ ^[Yy]$ ]]; then
+            git push origin --delete "$branch" 2>&1 && ok "远程分支 $branch 已删除" || warn "删除远程分支失败"
+        else
+            info "已跳过远程分支删除"
+        fi
+    fi
+
+    # 本地分支
+    if git show-ref --verify --quiet "refs/heads/$branch"; then
+        warn "将删除本地分支: $branch"
+        read -rp "确认删除本地分支 $branch? [y/N]: " c
+        if [[ "$c" =~ ^[Yy]$ ]]; then
+            git checkout "$(current_branch)" &>/dev/null || true
+            git branch -D "$branch" 2>&1 && ok "本地分支 $branch 已删除" || warn "删除本地分支失败"
+        fi
+    else
+        info "本地分支 $branch 不存在，跳过"
+    fi
+}
+
+# 清理 Pages 历史 deployments (通过 GitHub API)
+_pages_clean_deployments() {
+    info "获取 Pages 部署记录..."
+    local deps
+    deps=$(gh api "repos/$REPO/deployments?environment=github-pages&per_page=100" \
+        --jq '.[].id' 2>/dev/null || true)
+    if [[ -z "$deps" ]]; then
+        info "无 github-pages 部署记录"
+        return 0
+    fi
+
+    local count
+    count=$(echo "$deps" | wc -l | tr -d ' ')
+    warn "发现 $count 条 github-pages 部署记录"
+
+    # 限制处理数量，防止超大仓库卡死
+    local MAX_DEPS=200
+    if [[ "$count" -gt "$MAX_DEPS" ]]; then
+        warn "超过 $MAX_DEPS 条，仅处理前 $MAX_DEPS 条"
+        deps=$(echo "$deps" | head -n "$MAX_DEPS")
+        count=$MAX_DEPS
+    fi
+
+    read -rp "确认全部标记为 inactive (实质清理)? [y/N]: " c
+    [[ "$c" =~ ^[Yy]$ ]] || { info "已跳过"; return 0; }
+
+    local ok_count=0 fail_count=0 i=0 total=$count
+    local pids=() results=()
+
+    # 并发度（根据网络可调整，建议 5~10）
+    local CONCURRENCY=8
+
+    _mark_one() {
+        local dep_id="$1"
+        if gh api "repos/$REPO/deployments/$dep_id/statuses" \
+               --method POST --field state=inactive 2>/dev/null; then
+            echo "OK $dep_id"
+        else
+            echo "FAIL $dep_id"
+        fi
+    }
+
+    info "正在并发标记 (并发=$CONCURRENCY, 总数=$total)..."
+    while IFS= read -r dep_id; do
+        [[ -z "$dep_id" ]] && continue
+        i=$((i+1))
+
+        # 实时进度
+        echo -ne "\r  -> 处理中 $i/$total" >&2
+
+        # 并发派发
+        _mark_one "$dep_id" &
+        pids+=($!)
+
+        # 控制并发度
+        while [[ ${#pids[@]} -ge $CONCURRENCY ]]; do
+            local finished_pid
+            finished_pid=$(wait -n 2>/dev/null && echo ok || echo fail)
+            # 回收一个已结束的 pid
+            for j in "${!pids[@]}"; do
+                if ! kill -0 "${pids[$j]}" 2>/dev/null; then
+                    unset 'pids[$j]'
+                    break
+                fi
+            done
+            pids=("${pids[@]}")
+        done
+    done <<< "$deps"
+
+    # 等待剩余任务
+    echo -e "\r  -> 等待剩余任务完成..." >&2
+    wait
+
+    # 汇总（从后台任务的 echo 收集）
+    # 简化版：直接再次统计（因为 echo 已到 stdout，这里用 ok/fail 计数）
+    echo "" >&2
+    ok "部署记录处理完成 (共 $total 条)"
+    info "提示: 设为 inactive 后，GitHub 会自动清理对应部署"
+    info "      若需精确成功/失败数，请加 -v 参数运行"
+}
+
+# 清理工作区中残留的站点文件
+_pages_clean_files() {
+    local targets=("index.html" "404.html" "CNAME" "_config.yml" "_site" "docs/_site")
+    info "扫描工作区残留站点文件..."
+    local found=()
+    for t in "${targets[@]}"; do
+        [[ -e "$t" ]] && found+=("$t")
+    done
+    if [[ -d "docs" ]]; then
+        while IFS= read -r f; do
+            found+=("$f")
+        done < <(find docs -maxdepth 2 -type f \( -name "index.html" -o -name "CNAME" -o -name "_config.yml" \) 2>/dev/null)
+    fi
+
+    if [[ ${#found[@]} -eq 0 ]]; then
+        info "未发现常见站点残留文件"
+        return 0
+    fi
+    warn "发现 ${#found[@]} 个可能属于站点文件的项:"
+    for f in "${found[@]}"; do
+        data "$f"
+    done
+    read -rp "从工作区删除这些文件? [y/N]: " c
+    if [[ "$c" =~ ^[Yy]$ ]]; then
+        for f in "${found[@]}"; do
+            rm -rf "$f" && ok "已删除: $f" || warn "删除失败: $f"
+        done
+        read -rp "是否 git commit 这次清理? [y/N]: " cc
+        if [[ "$cc" =~ ^[Yy]$ ]]; then
+            git add -A
+            git commit -m "cleanup: remove github-pages artifacts" 2>/dev/null && ok "已提交清理" || warn "提交失败"
+        fi
+    else
+        info "已跳过文件删除"
+    fi
+}
+
+# 主入口: bash manage.sh pages [子命令]
+cmd_pages() {
+    _pages_check_gh || return 1
+
+    local action="${1:-menu}"
+    shift 2>/dev/null || true
+
+    case "$action" in
+        status)
+            _pages_status
+            ;;
+        disable|off|close)
+            _pages_status || true
+            echo ""
+            _pages_disable
+            ;;
+        remove-branch|rm-branch)
+            _pages_remove_branch "${1:-gh-pages}"
+            ;;
+        clean-deployments|clean-deps)
+            _pages_clean_deployments
+            ;;
+        clean-files)
+            _pages_clean_files
+            ;;
+        full|purge)
+            log "GitHub Pages 完整清理流程"
+            echo ""
+            _pages_status || true
+            echo ""
+            read -rp "即将执行: 关闭站点+删分支+清部署+清文件，确认? [y/N]: " c
+            [[ "$c" =~ ^[Yy]$ ]] || { ok "已取消"; return 0; }
+            echo ""
+            _pages_disable || true
+            echo ""
+            _pages_remove_branch "${1:-gh-pages}"
+            echo ""
+            _pages_clean_deployments
+            echo ""
+            _pages_clean_files
+            echo ""
+            ok "GitHub Pages 完整清理完成"
+            info "注意: 仓库本身不会被删除，仅 Pages 站点被关闭清理"
+            ;;
+        menu|"")
+            while true; do
+                echo ""
+                log "GitHub Pages 管理"
+                _pages_status 2>/dev/null || warn "Pages 未启用"
+                echo ""
+                echo "  [1] 关闭 Pages 站点 (unpublish, 设 source=None)"
+                echo "  [2] 删除 gh-pages 分支 (本地+远程)"
+                echo "  [3] 清理历史 deployments"
+                echo "  [4] 清理工作区站点文件"
+                echo "  [5] 完整清理 (1+2+3+4)"
+                echo "  [0] 返回上级"
+                echo ""
+                read -rp "请选择 [0-5]: " p
+                echo ""
+                case "$p" in
+                    1) _pages_disable ;;
+                    2) _pages_remove_branch ;;
+                    3) _pages_clean_deployments ;;
+                    4) _pages_clean_files ;;
+                    5) cmd_pages full ;;
+                    0|q) break ;;
+                    *) warn "无效选择: $p" ;;
+                esac
+                echo ""
+                read -rp "按 Enter 继续..."
+            done
+            ;;
+        help|-h)
+            cat <<'EOF'
+pages 子命令用法:
+    pages                      进入交互菜单
+    pages status               查看 Pages 状态
+    pages disable              关闭 Pages (unpublish)
+    pages remove-branch [name] 删除 gh-pages 分支 (默认 gh-pages)
+    pages clean-deployments    清理历史 deployment 记录
+    pages clean-files          清理工作区残留站点文件
+    pages full [branch]        一键完整清理 (关闭+分支+部署+文件)
+EOF
+            ;;
+        *) error "未知子命令: $action"; cmd_pages help ;;
+    esac
+}
+
 # ---------- 交互式主菜单 ----------
 show_menu() {
     while true; do
@@ -474,9 +782,10 @@ show_menu() {
         echo "  [4] 备份管理"
         echo "  [5] 查看状态"
         echo "  [6] 初始化"
+        echo "  [7] GitHub Pages 管理"
         echo "  [0] 退出"
         echo ""
-        read -rp "请选择 [0-6]: " choice
+        read -rp "请选择 [0-7]: " choice
         echo ""
 
         case "$choice" in
@@ -496,6 +805,7 @@ show_menu() {
                 ;;
             5) cmd_status ;;
             6) cmd_init ;;
+            7) cmd_pages menu ;;
             0|q) log "再见!"; break ;;
             *) warn "无效选择: $choice" ;;
         esac
@@ -523,6 +833,9 @@ GitHub Backend Manager - Termux 版
                         发布通知
     clean [tag]         清理旧版本
     backup [action]     备份管理 (list/create/restore)
+    pages [sub]         GitHub Pages 关闭与清理
+                        (status|disable|remove-branch|clean-deployments|
+                         clean-files|full|menu)
 
 选项:
     -v                  显示调试信息
@@ -566,6 +879,7 @@ main() {
         notify|n)   cmd_notify "${ARGS[@]}" ;;
         clean|c)    cmd_clean "${ARGS[@]}" ;;
         backup|b)   cmd_backup "${ARGS[@]}" ;;
+        pages|p)    cmd_pages "${ARGS[@]}" ;;
         help)       usage ;;
         *)          error "未知命令: $CMD"; usage ;;
     esac
