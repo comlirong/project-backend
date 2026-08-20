@@ -54,7 +54,7 @@ detect_jq() {
     command -v jq &>/dev/null && echo "1" || echo "0"
 }
 
-# ---------- 依赖检查（Termux 兼容：失败只警告不退出）----------
+# ---------- 依赖检查 ----------
 check_deps() {
     echo ""
     log "检查环境..."
@@ -134,15 +134,27 @@ json_get() {
     grep -oP "\"$key\"\s*:\s*(\"[^\"]*\"|[0-9]+|true|false)" "$file" 2>/dev/null | head -1 | sed 's/.*:\s*//; s/^"//; s/"$//'
 }
 
+json_get_lang() {
+    local file="$1" key="$2" lang="$3"
+    [[ -f "$file" ]] || { echo ""; return; }
+    if [[ "$HAS_JQ" == "1" ]]; then
+        jq -r ".$key.$lang // empty" "$file" 2>/dev/null || echo ""
+        return
+    fi
+    python3 -c "import json,sys; d=json.load(open('$file')); print(d.get('$key',{}).get('$lang',''))" 2>/dev/null || echo ""
+}
+
 json_build_update() {
-    local vc="$1" url="$2" msg="$3" force="$4" sha="$5"
-    local safe_msg
-    safe_msg=$(echo "$msg" | sed 's/\\/\\\\/g; s/"/\\"/g')
+    local vc="$1" url="$2" msg_zh="$3" msg_en="$4" msg_ru="$5" force="$6" sha="$7"
     cat > "$API_DIR/update.json" <<EOF
 {
   "versionCode": $vc,
   "url": "$url",
-  "message": "$safe_msg",
+  "message": {
+    "zh": "$msg_zh",
+    "en": "$msg_en",
+    "ru": "$msg_ru"
+  },
   "force": $force,
   "sha256": "$sha",
   "minOsVersion": $MIN_OS_VERSION
@@ -151,15 +163,20 @@ EOF
 }
 
 json_build_notify() {
-    local id="$1" title="$2" content="$3" force="$4"
-    local safe_title safe_content
-    safe_title=$(echo "$title" | sed 's/\\/\\\\/g; s/"/\\"/g')
-    safe_content=$(echo "$content" | sed 's/\\/\\\\/g; s/"/\\"/g')
+    local id="$1" title_zh="$2" title_en="$3" title_ru="$4" content_zh="$5" content_en="$6" content_ru="$7" force="$8"
     cat > "$API_DIR/notify.json" <<EOF
 {
   "id": "$id",
-  "title": "$safe_title",
-  "content": "$safe_content",
+  "title": {
+    "zh": "$title_zh",
+    "en": "$title_en",
+    "ru": "$title_ru"
+  },
+  "content": {
+    "zh": "$content_zh",
+    "en": "$content_en",
+    "ru": "$content_ru"
+  },
   "force": $force,
   "createdAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
@@ -260,8 +277,37 @@ clean_old() {
 cmd_init() {
     log "初始化项目..."
     mkdir -p "$API_DIR" "$BACKUP_DIR"
-    [[ -f "$API_DIR/update.json" ]] || echo '{"versionCode":0}' > "$API_DIR/update.json"
-    [[ -f "$API_DIR/notify.json" ]] || echo '{"id":"000"}' > "$API_DIR/notify.json"
+    [[ -f "$API_DIR/update.json" ]] || cat > "$API_DIR/update.json" <<'EOF'
+{
+  "versionCode": 0,
+  "url": "",
+  "message": {
+    "zh": "",
+    "en": "",
+    "ru": ""
+  },
+  "force": false,
+  "sha256": "",
+  "minOsVersion": 21
+}
+EOF
+    [[ -f "$API_DIR/notify.json" ]] || cat > "$API_DIR/notify.json" <<'EOF'
+{
+  "id": "000",
+  "title": {
+    "zh": "",
+    "en": "",
+    "ru": ""
+  },
+  "content": {
+    "zh": "",
+    "en": "",
+    "ru": ""
+  },
+  "force": false,
+  "createdAt": ""
+}
+EOF
     [[ -f "$API_DIR/notify_history.json" ]] || echo '[]' > "$API_DIR/notify_history.json"
 
     if [[ ! -f "$SCRIPT_DIR/.env" ]]; then
@@ -285,9 +331,12 @@ cmd_status() {
     if [[ -f "$API_DIR/update.json" ]]; then
         data "当前版本: $(json_get "$API_DIR/update.json" "versionCode")"
         data "下载地址: $(json_get "$API_DIR/update.json" "url")"
+        data "更新说明(zh): $(json_get_lang "$API_DIR/update.json" "message" "zh")"
+        data "强制更新: $(json_get "$API_DIR/update.json" "force")"
     fi
     if [[ -f "$API_DIR/notify.json" ]]; then
-        data "当前通知: #$(json_get "$API_DIR/notify.json" "id") $(json_get "$API_DIR/notify.json" "title")"
+        data "当前通知ID: #$(json_get "$API_DIR/notify.json" "id")"
+        data "通知内容(zh): $(json_get_lang "$API_DIR/notify.json" "content" "zh")"
     fi
     data "Git提交: $(git rev-parse --short HEAD 2>/dev/null || echo 'N/A')"
     data "远程标签: $(git ls-remote --tags origin 2>/dev/null | wc -l) 个"
@@ -297,10 +346,11 @@ cmd_status() {
 cmd_release() {
     local vc="${1:-}"
     local so="${2:-}"
-    local msg="${3:-}"
-    local force="${4:-}"
+    local msg_zh="${3:-}"
+    local msg_en="${4:-}"
+    local msg_ru="${5:-}"
+    local force="${6:-}"
 
-    # 版本号
     if [[ -z "$vc" ]]; then
         local sug=$(suggest_version)
         read -rp "版本号 [默认: $sug]: " vc
@@ -308,7 +358,6 @@ cmd_release() {
     fi
     [[ "$vc" =~ ^[0-9]+$ ]] || { error "版本号必须是整数"; return 1; }
 
-    # so 文件
     if [[ -z "$so" ]]; then
         local so_files=$(find_so)
         local count=$(echo "$so_files" | grep -c . || echo 0)
@@ -335,15 +384,21 @@ cmd_release() {
     fi
     [[ -f "$so" ]] || { error "so 文件不存在: $so"; return 1; }
 
-    # 更新说明
-    if [[ -z "$msg" ]]; then
-        local last=""
-        [[ -f "$API_DIR/update.json" ]] && last=$(json_get "$API_DIR/update.json" "message")
-        read -rp "更新说明 [默认: ${last:-版本更新}]: " msg
-        [[ -z "$msg" ]] && msg="${last:-版本更新}"
+    if [[ -z "$msg_zh" ]]; then
+        local last_zh=""
+        [[ -f "$API_DIR/update.json" ]] && last_zh=$(json_get_lang "$API_DIR/update.json" "message" "zh")
+        read -rp "更新说明(中文) [默认: ${last_zh:-版本更新}]: " msg_zh
+        [[ -z "$msg_zh" ]] && msg_zh="${last_zh:-版本更新}"
+    fi
+    if [[ -z "$msg_en" ]]; then
+        read -rp "更新说明(英文) [默认: $msg_zh]: " msg_en
+        [[ -z "$msg_en" ]] && msg_en="$msg_zh"
+    fi
+    if [[ -z "$msg_ru" ]]; then
+        read -rp "更新说明(俄文) [默认: $msg_en]: " msg_ru
+        [[ -z "$msg_ru" ]] && msg_ru="$msg_en"
     fi
 
-    # 强制更新
     if [[ -z "$force" ]]; then
         read -rp "强制更新? [y/N]: " f
         [[ "$f" =~ ^[Yy]$ ]] && force="true" || force="false"
@@ -359,48 +414,49 @@ cmd_release() {
     data "版本: $tag"
     data "文件: $so ($(du -h "$so" | cut -f1))"
     data "SHA256: $sha"
-    data "说明: $msg"
+    data "说明(zh): $msg_zh"
+    data "说明(en): $msg_en"
+    data "说明(ru): $msg_ru"
     data "强制: $force"
     echo ""
     read -rp "确认发布? [y/N]: " confirm
     [[ "$confirm" =~ ^[Yy]$ ]] || { ok "已取消"; return 0; }
 
-    # 备份 + 同步
     backup_create "pre_$tag" >/dev/null
     git add . 2>/dev/null || true
     git commit -m "auto: sync" 2>/dev/null || true
     git_sync
 
-    # 构建 JSON
-    json_build_update "$vc" "$url" "$msg" "$force" "$sha"
+    json_build_update "$vc" "$url" "$msg_zh" "$msg_en" "$msg_ru" "$force" "$sha"
 
-    # Git 操作
     git add "$API_DIR/update.json"
     git commit -m "release: $tag" || true
     git tag -a "$tag" -m "release $tag" || { error "打标签失败"; return 1; }
     git push origin "$(current_branch)" || warn "推送失败"
     git push origin "$tag" || warn "推送标签失败"
 
-    # GitHub Release
     if gh release view "$tag" --repo "$REPO" &>/dev/null; then
         warn "Release $tag 已存在，尝试上传资源"
     else
-        gh release create "$tag" --repo "$REPO" --title "Release $tag" --notes "$msg" || warn "创建 Release 失败"
+        gh release create "$tag" --repo "$REPO" --title "Release $tag" --notes "$msg_en" || warn "创建 Release 失败"
     fi
     gh release upload "$tag" "$so" --repo "$REPO" --clobber || warn "上传资源失败"
 
     ok "发布完成: $tag"
 
-    # 自动清理
     [[ "$AUTO_CLEAN" == "true" ]] && clean_old "$tag"
 }
 
 # ---------- 命令: notify ----------
 cmd_notify() {
     local id="${1:-}"
-    local title="${2:-}"
-    local content="${3:-}"
-    local force="${4:-}"
+    local title_zh="${2:-}"
+    local title_en="${3:-}"
+    local title_ru="${4:-}"
+    local content_zh="${5:-}"
+    local content_en="${6:-}"
+    local content_ru="${7:-}"
+    local force="${8:-}"
 
     if [[ -z "$id" ]]; then
         local sug=$(suggest_notify_id)
@@ -408,12 +464,28 @@ cmd_notify() {
         [[ -z "$id" ]] && id="$sug"
     fi
 
-    if [[ -z "$title" ]]; then
-        read -rp "通知标题: " title
+    if [[ -z "$title_zh" ]]; then
+        read -rp "通知标题(中文): " title_zh
+    fi
+    if [[ -z "$title_en" ]]; then
+        read -rp "通知标题(英文) [默认: $title_zh]: " title_en
+        [[ -z "$title_en" ]] && title_en="$title_zh"
+    fi
+    if [[ -z "$title_ru" ]]; then
+        read -rp "通知标题(俄文) [默认: $title_en]: " title_ru
+        [[ -z "$title_ru" ]] && title_ru="$title_en"
     fi
 
-    if [[ -z "$content" ]]; then
-        read -rp "通知内容: " content
+    if [[ -z "$content_zh" ]]; then
+        read -rp "通知内容(中文): " content_zh
+    fi
+    if [[ -z "$content_en" ]]; then
+        read -rp "通知内容(英文) [默认: $content_zh]: " content_en
+        [[ -z "$content_en" ]] && content_en="$content_zh"
+    fi
+    if [[ -z "$content_ru" ]]; then
+        read -rp "通知内容(俄文) [默认: $content_en]: " content_ru
+        [[ -z "$content_ru" ]] && content_ru="$content_en"
     fi
 
     if [[ -z "$force" ]]; then
@@ -421,7 +493,7 @@ cmd_notify() {
         [[ "$f" =~ ^[Yy]$ ]] && force="true" || force="false"
     fi
 
-    json_build_notify "$id" "$title" "$content" "$force"
+    json_build_notify "$id" "$title_zh" "$title_en" "$title_ru" "$content_zh" "$content_en" "$content_ru" "$force"
 
     git add "$API_DIR/notify.json" 2>/dev/null || true
     git commit -m "notify: $id" 2>/dev/null || true
@@ -461,14 +533,7 @@ cmd_backup() {
     esac
 }
 
-# ---------- 命令: pages (GitHub Pages 关闭与清理) ----------
-# 说明:
-#   GitHub 官方未提供 "DELETE /pages" 接口，官方推荐的"删除站点"方式
-#   是把发布源(source)设为 None —— 即取消发布(unpublish)，站点 URL 随即失效。
-#   本命令在此基础上，额外提供: 删除 gh-pages 分支、清理历史 deployments 记录、
-#   删除工作区中残留的站点文件，做到尽可能彻底的清理。
-
-# 检查 gh 是否可用
+# ---------- GitHub Pages 管理 ----------
 _pages_check_gh() {
     command -v gh &>/dev/null && return 0
     error "需要 gh CLI 才能管理 GitHub Pages"
@@ -476,12 +541,10 @@ _pages_check_gh() {
     return 1
 }
 
-# 获取 Pages 站点信息 (成功输出 JSON，失败输出空)
 _pages_info() {
     gh api "repos/$REPO/pages" --silent 2>/dev/null || true
 }
 
-# 显示 Pages 当前状态
 _pages_status() {
     local info
     info=$(_pages_info)
@@ -503,7 +566,6 @@ _pages_status() {
     return 0
 }
 
-# 关闭 (unpublish) Pages 站点 —— 把 source 设为 null
 _pages_disable() {
     _pages_check_gh || return 1
     local owner repo
@@ -511,11 +573,8 @@ _pages_disable() {
     repo=$(echo "$REPO" | cut -d/ -f2)
 
     log "关闭 GitHub Pages (DELETE /repos/$owner/$repo/pages)..."
-    
     local resp
-    resp=$(gh api --method DELETE \
-        -H "Accept: application/vnd.github+json" \
-        "/repos/$owner/$repo/pages" 2>&1)
+    resp=$(gh api --method DELETE -H "Accept: application/vnd.github+json" "/repos/$owner/$repo/pages" 2>&1)
     local rc=$?
 
     if [[ $rc -eq 0 ]]; then
@@ -525,13 +584,15 @@ _pages_disable() {
     elif echo "$resp" | grep -q '"status":"409"'; then
         warn "冲突: 可能站点正在构建中，稍后重试"
         return 1
+    elif echo "$resp" | grep -qi "Must have admin"; then
+        error "权限不足: 当前账号需要仓库 Admin/Maintainer 权限"
+        return 1
     else
         error "关闭失败 (rc=$rc): $resp"
         return 1
     fi
 }
 
-# 删除 gh-pages 分支 (本地+远程)
 _pages_remove_branch() {
     local branch="${1:-gh-pages}"
     info "检查分支: $branch"
@@ -550,7 +611,6 @@ _pages_remove_branch() {
         fi
     fi
 
-    # 本地分支
     if git show-ref --verify --quiet "refs/heads/$branch"; then
         warn "将删除本地分支: $branch"
         read -rp "确认删除本地分支 $branch? [y/N]: " c
@@ -563,12 +623,10 @@ _pages_remove_branch() {
     fi
 }
 
-# 清理 Pages 历史 deployments (通过 GitHub API)
 _pages_clean_deployments() {
     info "获取 Pages 部署记录..."
     local deps
-    deps=$(gh api "repos/$REPO/deployments?environment=github-pages&per_page=100" \
-        --jq '.[].id' 2>/dev/null || true)
+    deps=$(gh api "repos/$REPO/deployments?environment=github-pages&per_page=100" --jq '.[].id' 2>/dev/null || true)
     if [[ -z "$deps" ]]; then
         info "无 github-pages 部署记录"
         return 0
@@ -578,7 +636,6 @@ _pages_clean_deployments() {
     count=$(echo "$deps" | wc -l | tr -d ' ')
     warn "发现 $count 条 github-pages 部署记录"
 
-    # 限制处理数量，防止超大仓库卡死
     local MAX_DEPS=200
     if [[ "$count" -gt "$MAX_DEPS" ]]; then
         warn "超过 $MAX_DEPS 条，仅处理前 $MAX_DEPS 条"
@@ -589,62 +646,29 @@ _pages_clean_deployments() {
     read -rp "确认全部标记为 inactive (实质清理)? [y/N]: " c
     [[ "$c" =~ ^[Yy]$ ]] || { info "已跳过"; return 0; }
 
-    local ok_count=0 fail_count=0 i=0 total=$count
-    local pids=() results=()
-
-    # 并发度（根据网络可调整，建议 5~10）
-    local CONCURRENCY=8
-
-    _mark_one() {
-        local dep_id="$1"
-        if gh api "repos/$REPO/deployments/$dep_id/statuses" \
-               --method POST --field state=inactive 2>/dev/null; then
-            echo "OK $dep_id"
-        else
-            echo "FAIL $dep_id"
-        fi
-    }
-
+    local i=0 total=$count CONCURRENCY=8
     info "正在并发标记 (并发=$CONCURRENCY, 总数=$total)..."
+
     while IFS= read -r dep_id; do
         [[ -z "$dep_id" ]] && continue
         i=$((i+1))
-
-        # 实时进度
         echo -ne "\r  -> 处理中 $i/$total" >&2
 
-        # 并发派发
-        _mark_one "$dep_id" &
-        pids+=($!)
+        (
+            gh api "repos/$REPO/deployments/$dep_id/statuses" --method POST --field state=inactive 2>/dev/null || true
+        ) &
 
-        # 控制并发度
-        while [[ ${#pids[@]} -ge $CONCURRENCY ]]; do
-            local finished_pid
-            finished_pid=$(wait -n 2>/dev/null && echo ok || echo fail)
-            # 回收一个已结束的 pid
-            for j in "${!pids[@]}"; do
-                if ! kill -0 "${pids[$j]}" 2>/dev/null; then
-                    unset 'pids[$j]'
-                    break
-                fi
-            done
-            pids=("${pids[@]}")
+        while [[ $(jobs -r | wc -l) -ge $CONCURRENCY ]]; do
+            sleep 0.2
         done
     done <<< "$deps"
 
-    # 等待剩余任务
-    echo -e "\r  -> 等待剩余任务完成..." >&2
     wait
-
-    # 汇总（从后台任务的 echo 收集）
-    # 简化版：直接再次统计（因为 echo 已到 stdout，这里用 ok/fail 计数）
-    echo "" >&2
+    echo -e "\r  -> 处理完成             " >&2
     ok "部署记录处理完成 (共 $total 条)"
     info "提示: 设为 inactive 后，GitHub 会自动清理对应部署"
-    info "      若需精确成功/失败数，请加 -v 参数运行"
 }
 
-# 清理工作区中残留的站点文件
 _pages_clean_files() {
     local targets=("index.html" "404.html" "CNAME" "_config.yml" "_site" "docs/_site")
     info "扫描工作区残留站点文件..."
@@ -681,7 +705,6 @@ _pages_clean_files() {
     fi
 }
 
-# 主入口: bash manage.sh pages [子命令]
 cmd_pages() {
     _pages_check_gh || return 1
 
@@ -731,9 +754,9 @@ cmd_pages() {
                 log "GitHub Pages 管理"
                 _pages_status 2>/dev/null || warn "Pages 未启用"
                 echo ""
-                echo "  [1] 关闭 Pages 站点 (unpublish, 设 source=None)"
+                echo "  [1] 关闭 Pages 站点 (DELETE)"
                 echo "  [2] 删除 gh-pages 分支 (本地+远程)"
-                echo "  [3] 清理历史 deployments"
+                echo "  [3] 清理历史 deployments (并发)"
                 echo "  [4] 清理工作区站点文件"
                 echo "  [5] 完整清理 (1+2+3+4)"
                 echo "  [0] 返回上级"
@@ -758,9 +781,9 @@ cmd_pages() {
 pages 子命令用法:
     pages                      进入交互菜单
     pages status               查看 Pages 状态
-    pages disable              关闭 Pages (unpublish)
+    pages disable              关闭 Pages (DELETE 站点)
     pages remove-branch [name] 删除 gh-pages 分支 (默认 gh-pages)
-    pages clean-deployments    清理历史 deployment 记录
+    pages clean-deployments    清理历史 deployment 记录 (并发)
     pages clean-files          清理工作区残留站点文件
     pages full [branch]        一键完整清理 (关闭+分支+部署+文件)
 EOF
@@ -827,15 +850,20 @@ GitHub Backend Manager - Termux 版
 命令:
     init                初始化环境
     status              查看状态
-    release [v] [so] [msg] [force]
-                        发布新版本
-    notify [id] [title] [content] [force]
-                        发布通知
+    release [v] [so] [msg_zh] [msg_en] [msg_ru] [force]
+                        发布新版本 (支持多语言)
+    notify [id] [title_zh] [title_en] [title_ru]
+            [content_zh] [content_en] [content_ru] [force]
+                        发布多语言通知
     clean [tag]         清理旧版本
     backup [action]     备份管理 (list/create/restore)
     pages [sub]         GitHub Pages 关闭与清理
                         (status|disable|remove-branch|clean-deployments|
                          clean-files|full|menu)
+
+JSON 格式:
+    update.json:  versionCode, url, message{zh,en,ru}, force, sha256, minOsVersion
+    notify.json:   id, title{zh,en,ru}, content{zh,en,ru}, force, createdAt
 
 选项:
     -v                  显示调试信息
