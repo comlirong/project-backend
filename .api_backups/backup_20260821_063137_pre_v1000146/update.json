@@ -1,0 +1,12 @@
+{
+  "versionCode": 1000145,
+  "url": "https://github.com/comlirong/project-backend/releases/download/v1000145/libmain.so",
+  "message": {
+    "zh": "1.旁路修整(可能仍会被封禁7天)\n2.优化自瞄触发模式，改为：开火/开镜/两者",
+    "en": "1. Side route adjustments (may still result in a 7-day ban)\n2. Optimized aimbot trigger mode, changed to: fire/scope/both",
+    "ru": "1. Корректировка боковых маршрутов (по-прежнему может привести к 7-дневному бану)\n2. Оптимизирован режим срабатывания аимбота, изменен на: огонь/прицел/оба"
+  },
+  "force": true,
+  "sha256": "a8b40b37b84c790d40f023bcb286c3bffff9ad9bfaacffc8498db90e0264a739",
+  "minOsVersion": 21
+}
