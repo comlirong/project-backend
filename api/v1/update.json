@@ -1,12 +1,12 @@
 {
-  "versionCode": 1000153,
-  "url": "https://github.com/comlirong/project-backend/releases/download/v1000153/libmain.so",
+  "versionCode": 1000154,
+  "url": "https://github.com/comlirong/project-backend/releases/download/v1000154/libmain.so",
   "message": {
     "zh": "修整旁路",
     "en": "Repairing the bypass",
     "ru": "Ремонт обходного пути"
   },
-  "force": false,
-  "sha256": "396a2d80e695a7638ec143df571d6d72e39c1b8629a48fadf45ae71bfe304f2f",
+  "force": true,
+  "sha256": "745882e20d5d7ff55f45c3743dbbc9f49375bc8f26fc894db84d4f689ccea236",
   "minOsVersion": 21
 }
