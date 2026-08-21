@@ -1,18 +1,12 @@
 {
-  "versionCode": 1000150,
-  "url": "https://github.com/comlirong/project-backend/releases/download/v1000150/libmain.so",
+  "versionCode": 1000151,
+  "url": "https://github.com/comlirong/project-backend/releases/download/v1000151/libmain.so",
   "message": {
-    "zh": "1.旁路修整(可能仍会被封禁7天)
-2.优化自瞄触发模式，改为：开火/开镜/两者
-3.修复已知的自瞄问题",
-    "en": "1. Side route adjustments (may still result in a 7-day ban)
-2. Optimized aimbot trigger mode, changed to: fire/scope/both
-3. Fix known aimbot issues.",
-    "ru": "1. Корректировка боковых маршрутов (по-прежнему может привести к 7-дневному бану)
-2. Оптимизирован режим срабатывания аимбота, изменен на: огонь/прицел/оба
-3. Исправлены известные проблемы с аимботом."
+    "zh": "修整旁路",
+    "en": "Repairing the bypass",
+    "ru": "Ремонт обходного пути"
   },
-  "force": true,
-  "sha256": "d894f2f0472a149bf892ae99bb32af0ccb1e3a666c8fa17ec410ff5b44a0a21e",
+  "force": false,
+  "sha256": "e5478fa3aadcabfae7649d6c322202d2af352d800b534fb172504c68358a69c7",
   "minOsVersion": 21
 }
