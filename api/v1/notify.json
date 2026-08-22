@@ -1,15 +1,15 @@
 {
-  "id": "006",
+  "id": "007",
   "title": {
     "zh": "通知",
-    "en": "NOTIFY",
-    "ru": "УВЕДОМИТЬ"
+    "en": "Notice",
+    "ru": "уведомление"
   },
   "content": {
-    "zh": "当前所有版本均为测试版本，请问使用大号",
-    "en": "All current versions are test versions, please use the large size",
+    "zh": "目前所有版本均为测试版本\\n🚫严禁使用大号🚫",
+    "en": "All versions are currently in beta testing阶段",
     "ru": "Все текущие версии являются тестовыми, пожалуйста, используйте большой размер"
   },
   "force": true,
-  "createdAt": "2026-08-20T15:24:11Z"
+  "createdAt": "2026-08-22T19:37:14Z"
 }
