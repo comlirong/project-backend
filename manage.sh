@@ -1,11 +1,22 @@
 #!/bin/bash
 # ==============================================================================
-# GitHub Backend Manager - Termux 专用版 (优化版 v2.1)
-# 修复: 多语言默认值优先读取JSON文件中的对应语言值
+# GitHub Backend Manager - Termux 专用版 (优化版 v3.0)
+# 优化: 安全性加固、稳定性增强、错误处理完善、JSON安全构建
 # ==============================================================================
 
-set -uo pipefail
+set -euo pipefail
 IFS=$'\n\t'
+
+# ---------- 严格模式与信号处理 ----------
+__cleanup() {
+    local rc=$?
+    [[ -n "${__TMPDIR:-}" && -d "$__TMPDIR" ]] && rm -rf "$__TMPDIR"
+    exit $rc
+}
+__TMPDIR=""
+trap '__cleanup' EXIT
+
+trap 'error "接收到中断信号，正在退出..."; exit 130' INT TERM
 
 # ---------- 颜色配置 ----------
 if [[ -t 1 ]]; then
@@ -19,7 +30,7 @@ else
 fi
 
 # ---------- 基础配置 ----------
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="comlirong/project-backend"
 API_DIR="api/v1"
 BACKUP_DIR=".api_backups"
@@ -37,12 +48,45 @@ HAS_JQ=0
 HAS_GH=0
 SHA_CMD=""
 
+# ---------- 安全工具函数 ----------
+# 验证字符串是否为有效整数
+_is_int() {
+    [[ "$1" =~ ^[0-9]+$ ]]
+}
+
+# 验证路径是否为常规文件且在允许范围内（防止路径遍历）
+_validate_file_path() {
+    local path="$1"
+    [[ -z "$path" ]] && return 1
+    # 拒绝包含 .. 的路径
+    [[ "$path" == *".."* ]] && { error "路径包含非法字符: $path"; return 1; }
+    [[ -f "$path" ]] || { error "文件不存在: $path"; return 1; }
+    return 0
+}
+
+# 安全执行命令，支持 dry-run
+_safe_exec() {
+    if [[ "$DRY_RUN" == "1" ]]; then
+        info "[DRY-RUN] $*"
+        return 0
+    fi
+    "$@"
+}
+
 # ---------- 日志系统 ----------
 _log_write() {
     local level="$1"; shift
     local msg="$*"
     local ts
     ts=$(date '+%Y-%m-%d %H:%M:%S')
+    # 避免日志文件过大（>10MB 时轮转）
+    if [[ -f "$LOG_FILE" ]]; then
+        local size
+        size=$(stat -f%z "$LOG_FILE" 2>/dev/null || stat -c%s "$LOG_FILE" 2>/dev/null || echo 0)
+        if [[ "$size" -gt 10485760 ]]; then
+            mv "$LOG_FILE" "$LOG_FILE.old"
+        fi
+    fi
     echo "[$ts] [$level] $msg" >> "$LOG_FILE" 2>/dev/null || true
 }
 
@@ -55,9 +99,33 @@ data()  { echo -e "    ${C_GRAY}$*${C_RESET}"; }
 debug() { [[ "$VERBOSE" == "1" ]] && echo -e "    ${C_GRAY}. $*${C_RESET}" >&2 || true; }
 ask()   { echo -ne "${C_BOLD}[?]${C_RESET} $* "; }
 
-# ---------- 配置加载 ----------
+# ---------- 配置加载（安全版） ----------
 load_env() {
-    [[ -f "$SCRIPT_DIR/.env" ]] && source "$SCRIPT_DIR/.env"
+    local env_file="$SCRIPT_DIR/.env"
+    [[ -f "$env_file" ]] || return 0
+    # 安全 source：仅允许 KEY=VALUE 格式，拒绝命令替换和函数定义
+    local line key val
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        # 跳过空行和注释
+        [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+        # 仅接受 VAR=value 格式（字母数字下划线开头）
+        if [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*=.*$ ]]; then
+            key="${line%%=*}"
+            val="${line#*=}"
+            # 去除可能的引号
+            val="${val#\"}"; val="${val%\"}"
+            val="${val#\'}"; val="${val%\'}"
+            # 仅设置白名单变量
+            case "$key" in
+                REPO|KEEP_RELEASES|AUTO_CLEAN|DEFAULT_BRANCH|MIN_OS_VERSION)
+                    declare -g "$key=$val"
+                    ;;
+                *) debug "忽略非白名单变量: $key" ;;
+            esac
+        else
+            warn ".env 中存在非标准行，已跳过: $line"
+        fi
+    done < "$env_file"
 }
 
 # ---------- 工具检测 ----------
@@ -104,19 +172,33 @@ check_deps() {
     ok "环境检查完成"
 }
 
-# ---------- 确认提示 ----------
+# ---------- 确认提示（支持非交互环境） ----------
 confirm() {
     local msg="${1:-确认执行?}"
     [[ "$FORCE_YES" == "1" ]] && return 0
+    # 非交互环境（无 tty）默认拒绝
+    if [[ ! -t 0 ]]; then
+        warn "非交互环境，默认拒绝操作: $msg"
+        return 1
+    fi
     local r
     ask "$msg [y/N]: "
     read -r r
     [[ "$r" =~ ^[Yy]$ ]]
 }
 
-# ---------- Git 操作 ----------
+# ---------- Git 操作封装（含错误处理） ----------
 current_branch() {
     git branch --show-current 2>/dev/null || git symbolic-ref --short HEAD 2>/dev/null || echo "$DEFAULT_BRANCH"
+}
+
+_git_safe_checkout() {
+    local branch="$1"
+    if ! git show-ref --verify --quiet "refs/heads/$branch"; then
+        error "本地分支不存在: $branch"
+        return 1
+    fi
+    git checkout "$branch" || { error "切换分支失败: $branch"; return 1; }
 }
 
 git_sync() {
@@ -124,10 +206,10 @@ git_sync() {
     branch=$(current_branch)
     info "同步远程 origin/$branch..."
 
-    git fetch origin "$branch" 2>/dev/null || git fetch origin 2>/dev/null || {
+    if ! git fetch origin "$branch" 2>/dev/null && ! git fetch origin 2>/dev/null; then
         warn "fetch 失败，跳过同步"
         return 0
-    }
+    fi
 
     local local_head remote_head
     local_head=$(git rev-parse HEAD)
@@ -142,6 +224,7 @@ git_sync() {
         return 0
     fi
 
+    # 尝试自动合并
     if git merge "origin/$branch" --no-edit -m "auto: sync remote" 2>/dev/null; then
         git push origin "$branch" || warn "推送失败"
         ok "已合并并推送"
@@ -149,6 +232,7 @@ git_sync() {
     fi
 
     warn "检测到冲突，尝试自动解决..."
+    # 优先保留本地 API 文件
     git checkout --ours "$API_DIR/update.json" "$API_DIR/notify.json" 2>/dev/null || true
     git add "$API_DIR" 2>/dev/null || true
     git commit -m "auto: resolve conflicts" || true
@@ -156,7 +240,7 @@ git_sync() {
     ok "冲突已解决"
 }
 
-# ---------- JSON 处理 ----------
+# ---------- JSON 处理（安全增强版） ----------
 json_get() {
     local file="$1" key="$2"
     [[ -f "$file" ]] || { echo ""; return; }
@@ -164,6 +248,7 @@ json_get() {
         jq -r ".$key // empty" "$file" 2>/dev/null || echo ""
         return
     fi
+    # 纯 Bash 回退：更安全地提取值
     grep -oP "\"$key\"\s*:\s*(\"[^\"]*\"|[0-9]+|true|false)" "$file" 2>/dev/null | head -1 | sed 's/.*:\s*//; s/^"//; s/"$//'
 }
 
@@ -174,72 +259,101 @@ json_get_lang() {
         jq -r ".$key.$lang // empty" "$file" 2>/dev/null || echo ""
         return
     fi
-    python3 -c "import json,sys; d=json.load(open('$file')); print(d.get('$key',{}).get('$lang',''))" 2>/dev/null || echo ""
+    # Python 回退：使用安全方式传递参数
+    python3 -c "import json,sys; f=open(sys.argv[1]); d=json.load(f); f.close(); print(d.get(sys.argv[2],{}).get(sys.argv[3],''))" "$file" "$key" "$lang" 2>/dev/null || echo ""
 }
 
 json_validate() {
     local file="$1"
     [[ -f "$file" ]] || { error "文件不存在: $file"; return 1; }
-    
+
     if [[ "$HAS_JQ" == "1" ]]; then
         jq empty "$file" 2>/dev/null && return 0
     elif command -v python3 &>/dev/null; then
-        python3 -c "import json; json.load(open('$file'))" 2>/dev/null && return 0
+        python3 -c "import json; f=open(sys.argv[1]); json.load(f); f.close()" "$file" 2>/dev/null && return 0
     fi
-    
+
     local open close
     open=$(grep -o '{' "$file" | wc -l)
     close=$(grep -o '}' "$file" | wc -l)
     [[ "$open" -eq "$close" ]] || { error "JSON括号不匹配: $file"; return 1; }
-    
+
     warn "无法精确验证JSON，请手动检查: $file"
     return 0
 }
 
+# 安全构建 JSON：使用 jq 或 Python，避免字符串拼接注入
 json_build_update() {
     local vc="$1" url="$2" msg_zh="$3" msg_en="$4" msg_ru="$5" force="$6" sha="$7"
-    cat > "$API_DIR/update.json" <<EOF
-{
-  "versionCode": $vc,
-  "url": "$url",
-  "message": {
-    "zh": "$msg_zh",
-    "en": "$msg_en",
-    "ru": "$msg_ru"
-  },
-  "force": $force,
-  "sha256": "$sha",
-  "minOsVersion": $MIN_OS_VERSION
+    local out="$API_DIR/update.json"
+
+    if [[ "$HAS_JQ" == "1" ]]; then
+        jq -n \
+            --argjson versionCode "$vc" \
+            --arg url "$url" \
+            --arg zh "$msg_zh" \
+            --arg en "$msg_en" \
+            --arg ru "$msg_ru" \
+            --argjson force "$force" \
+            --arg sha256 "$sha" \
+            --argjson minOsVersion "$MIN_OS_VERSION" \
+            '{versionCode: $versionCode, url: $url, message: {zh: $zh, en: $en, ru: $ru}, force: $force, sha256: $sha256, minOsVersion: $minOsVersion}' > "$out"
+    else
+        python3 -c "
+import json, sys
+vc, url, zh, en, ru, force, sha, minos = sys.argv[1:]
+data = {
+    'versionCode': int(vc),
+    'url': url,
+    'message': {'zh': zh, 'en': en, 'ru': ru},
+    'force': force.lower() == 'true',
+    'sha256': sha,
+    'minOsVersion': int(minos)
 }
-EOF
+with open(sys.argv[9], 'w') as f:
+    json.dump(data, f, ensure_ascii=False, indent=2)
+    f.write('\n')
+" "$vc" "$url" "$msg_zh" "$msg_en" "$msg_ru" "$force" "$sha" "$MIN_OS_VERSION" "$out"
+    fi
 }
 
 json_build_notify() {
     local id="$1" title_zh="$2" title_en="$3" title_ru="$4" content_zh="$5" content_en="$6" content_ru="$7" force="$8"
-    cat > "$API_DIR/notify.json" <<EOF
-{
-  "id": "$id",
-  "title": {
-    "zh": "$title_zh",
-    "en": "$title_en",
-    "ru": "$title_ru"
-  },
-  "content": {
-    "zh": "$content_zh",
-    "en": "$content_en",
-    "ru": "$content_ru"
-  },
-  "force": $force,
-  "createdAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    local out="$API_DIR/notify.json"
+
+    if [[ "$HAS_JQ" == "1" ]]; then
+        jq -n \
+            --arg id "$id" \
+            --arg zh_t "$title_zh" --arg en_t "$title_en" --arg ru_t "$title_ru" \
+            --arg zh_c "$content_zh" --arg en_c "$content_en" --arg ru_c "$content_ru" \
+            --argjson force "$force" \
+            --arg createdAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{id: $id, title: {zh: $zh_t, en: $en_t, ru: $ru_t}, content: {zh: $zh_c, en: $en_c, ru: $ru_c}, force: $force, createdAt: $createdAt}' > "$out"
+    else
+        python3 -c "
+import json, sys
+id_, tzh, ten, tru, czh, cen, cru, force = sys.argv[1:9]
+data = {
+    'id': id_,
+    'title': {'zh': tzh, 'en': ten, 'ru': tru},
+    'content': {'zh': czh, 'en': cen, 'ru': cru},
+    'force': force.lower() == 'true',
+    'createdAt': __import__('datetime').datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
 }
-EOF
+with open(sys.argv[9], 'w') as f:
+    json.dump(data, f, ensure_ascii=False, indent=2)
+    f.write('\n')
+" "$id" "$title_zh" "$title_en" "$title_ru" "$content_zh" "$content_en" "$content_ru" "$force" "$out"
+    fi
 }
 
-# ---------- 备份 ----------
+# ---------- 备份（增强版） ----------
 backup_create() {
     local reason="${1:-manual}"
     local ts
     ts=$(date +%Y%m%d_%H%M%S)
+    # 清理 reason 中的特殊字符
+    reason="${reason//[^a-zA-Z0-9_-]/_}"
     local path="$BACKUP_DIR/backup_${ts}_${reason}"
     mkdir -p "$path"
     local copied=0
@@ -249,7 +363,10 @@ backup_create() {
             copied=$((copied + 1))
         fi
     done
-    [[ "$copied" -gt 0 ]] && { echo "$path"; return 0; }
+    if [[ "$copied" -gt 0 ]]; then
+        echo "$path"
+        return 0
+    fi
     rmdir "$path" 2>/dev/null || true
     return 1
 }
@@ -273,19 +390,31 @@ backup_list() {
 # ---------- 版本推断 ----------
 suggest_version() {
     local current=""
-    [[ -f "$API_DIR/update.json" ]] && current=$(json_get "$API_DIR/update.json" "versionCode")
-    [[ -z "$current" ]] && current=$(git tag --sort=-version:refname 2>/dev/null | grep -E '^v[0-9]+$' | head -1 | sed 's/^v//')
-    [[ -n "$current" && "$current" =~ ^[0-9]+$ ]] && echo $((current + 1)) || echo "1"
+    if [[ -f "$API_DIR/update.json" ]]; then
+        current=$(json_get "$API_DIR/update.json" "versionCode")
+    fi
+    if [[ -z "$current" ]]; then
+        current=$(git tag --sort=-version:refname 2>/dev/null | grep -E '^v[0-9]+$' | head -1 | sed 's/^v//') || true
+    fi
+    if [[ -n "$current" && "$current" =~ ^[0-9]+$ ]]; then
+        echo $((current + 1))
+    else
+        echo "1"
+    fi
 }
 
 suggest_notify_id() {
     local last=""
     [[ -f "$API_DIR/notify.json" ]] && last=$(json_get "$API_DIR/notify.json" "id")
     [[ -z "$last" ]] && { echo "001"; return; }
-    [[ "$last" =~ ^[0-9]+$ ]] && printf "%03d" $((10#$last + 1)) || date +"%Y%m%d%H%M%S"
+    # 去除前导零后递增
+    local num
+    num=$(echo "$last" | sed 's/^0*//')
+    [[ -z "$num" ]] && num=0
+    printf "%03d" $((num + 1))
 }
 
-# ---------- 查找 so 文件 ----------
+# ---------- 查找 so 文件（修复空值与空格问题） ----------
 find_so() {
     local dirs=("." "build" "libs" "jniLibs" "src/main/jniLibs" "app/build/intermediates/merged_native_libs")
     local found=()
@@ -295,17 +424,20 @@ find_so() {
             found+=("$f")
         done < <(find "$d" -maxdepth 3 -name "*.so" -type f -print0 2>/dev/null)
     done
-    printf '%s\n' "${found[@]}" | sort -u
+    if [[ ${#found[@]} -eq 0 ]]; then
+        return 0
+    fi
+    printf '%s\0' "${found[@]}" | sort -uz | tr '\0' '\n'
 }
 
-# ---------- 清理旧版本 ----------
+# ---------- 清理旧版本（增强错误处理） ----------
 clean_old() {
     local keep_tag="${1:-}"
     local keep="$KEEP_RELEASES"
 
     info "获取远程标签..."
     local tags
-    tags=$(git ls-remote --tags origin 'refs/tags/v*' 2>/dev/null | awk '{print $2}' | sed 's|refs/tags/||' | grep -E '^v[0-9]+$' | sort -Vr)
+    tags=$(git ls-remote --tags origin 'refs/tags/v*' 2>/dev/null | awk '{print $2}' | sed 's|refs/tags/||' | grep -E '^v[0-9]+$' | sort -Vr) || true
     [[ -z "$tags" ]] && { warn "无远程标签"; return; }
 
     local tags_to_delete=()
@@ -330,20 +462,32 @@ clean_old() {
     confirm "确认删除" || { ok "已取消"; return; }
 
     for tag in "${tags_to_delete[@]}"; do
-        if [[ "$HAS_GH" == "1" ]] && gh release view "$tag" --repo "$REPO" &>/dev/null; then
-            gh release delete "$tag" --repo "$REPO" --yes 2>/dev/null && ok "删除 release: $tag" || warn "release 删除失败: $tag"
-        else
-            debug "release $tag 不存在或 gh 不可用，跳过"
+        if [[ "$HAS_GH" == "1" ]]; then
+            if gh release view "$tag" --repo "$REPO" &>/dev/null; then
+                if gh release delete "$tag" --repo "$REPO" --yes 2>/dev/null; then
+                    ok "删除 release: $tag"
+                else
+                    warn "release 删除失败: $tag"
+                fi
+            fi
         fi
-        git push origin ":refs/tags/$tag" 2>/dev/null && ok "删除 tag: $tag" || warn "tag 删除失败: $tag"
+        if git push origin ":refs/tags/$tag" 2>/dev/null; then
+            ok "删除 tag: $tag"
+        else
+            warn "tag 删除失败: $tag"
+        fi
     done
 }
+
+# ==============================================================================
+# 命令实现
+# ==============================================================================
 
 # ---------- 命令: init ----------
 cmd_init() {
     log "初始化项目..."
     mkdir -p "$API_DIR" "$BACKUP_DIR"
-    
+
     if [[ ! -f "$API_DIR/update.json" ]]; then
         cat > "$API_DIR/update.json" <<'EOF'
 {
@@ -361,7 +505,7 @@ cmd_init() {
 EOF
         ok "已创建 update.json"
     fi
-    
+
     if [[ ! -f "$API_DIR/notify.json" ]]; then
         cat > "$API_DIR/notify.json" <<'EOF'
 {
@@ -382,7 +526,7 @@ EOF
 EOF
         ok "已创建 notify.json"
     fi
-    
+
     [[ -f "$API_DIR/notify_history.json" ]] || echo '[]' > "$API_DIR/notify_history.json"
 
     if [[ ! -f "$SCRIPT_DIR/.env" ]]; then
@@ -422,15 +566,11 @@ cmd_status() {
     fi
     echo ""
     data "Git提交: $(git rev-parse --short HEAD 2>/dev/null || echo 'N/A')"
-    data "远程标签: $(git ls-remote --tags origin 2>/dev/null | wc -l) 个"
-    data "备份数: $(find "$BACKUP_DIR" -maxdepth 1 -type d -name 'backup_*' 2>/dev/null | wc -l) 个"
+    data "远程标签: $(git ls-remote --tags origin 2>/dev/null | wc -l | tr -d ' ') 个"
+    data "备份数: $(find "$BACKUP_DIR" -maxdepth 1 -type d -name 'backup_*' 2>/dev/null | wc -l | tr -d ' ') 个"
 }
 
-# ==============================================================================
-# 修复核心: 多语言默认值优先读取JSON文件中的对应语言值
-# ==============================================================================
-
-# ---------- 命令: release (修复版) ----------
+# ---------- 命令: release (安全增强版) ----------
 cmd_release() {
     local vc="${1:-}"
     local so="${2:-}"
@@ -439,7 +579,7 @@ cmd_release() {
     local msg_ru="${5:-}"
     local force="${6:-}"
 
-    # 预读取现有JSON中的各语言值（作为默认值来源）
+    # 预读取现有JSON中的各语言值
     local last_zh="" last_en="" last_ru=""
     if [[ -f "$API_DIR/update.json" ]]; then
         last_zh=$(json_get_lang "$API_DIR/update.json" "message" "zh")
@@ -454,22 +594,26 @@ cmd_release() {
         read -r vc
         [[ -z "$vc" ]] && vc="$sug"
     fi
-    [[ "$vc" =~ ^[0-9]+$ ]] || { error "版本号必须是整数"; return 1; }
+    _is_int "$vc" || { error "版本号必须是整数"; return 1; }
 
     if [[ -z "$so" ]]; then
         local so_files
         so_files=$(find_so)
-        local count
-        count=$(echo "$so_files" | grep -c . || echo 0)
+        local count=0
+        if [[ -n "$so_files" ]]; then
+            count=$(printf '%s\n' "$so_files" | grep -c '^' || echo 0)
+        fi
         if [[ "$count" -eq 1 ]]; then
             so="$so_files"
             info "自动发现 so: $so"
         elif [[ "$count" -gt 1 ]]; then
             info "发现 $count 个 so 文件:"
             local i=1
+            local -a files=()
             while IFS= read -r f; do
                 [[ -n "$f" ]] || continue
                 data "$i) $f ($(du -h "$f" 2>/dev/null | cut -f1))"
+                files+=("$f")
                 i=$((i+1))
             done <<< "$so_files"
             data "0) 手动输入路径"
@@ -479,17 +623,20 @@ cmd_release() {
             if [[ "$choice" == "0" ]]; then
                 ask "so 文件路径: "
                 read -r so
+            elif _is_int "$choice" && [[ "$choice" -ge 1 && "$choice" -lt "$i" ]]; then
+                so="${files[$((choice-1))]}"
             else
-                so=$(sed -n "${choice}p" <<< "$so_files")
+                error "无效选择"
+                return 1
             fi
         else
             ask "so 文件路径: "
             read -r so
         fi
     fi
-    [[ -f "$so" ]] || { error "so 文件不存在: $so"; return 1; }
+    _validate_file_path "$so" || return 1
 
-    # 修复: 各语言默认值优先读取JSON中对应语言的现有值
+    # 多语言默认值优先读取JSON中对应语言的现有值
     if [[ -z "$msg_zh" ]]; then
         ask "更新说明(中文) [默认: ${last_zh:-版本更新}]: "
         read -r msg_zh
@@ -516,9 +663,13 @@ cmd_release() {
     local tag="v$vc"
     local so_name
     so_name=$(basename "$so")
+    # 验证 so_name 不包含路径分隔符
+    [[ "$so_name" == *"/"* ]] && { error "文件名非法: $so_name"; return 1; }
+
     local url="https://github.com/$REPO/releases/download/$tag/$so_name"
     local sha
     sha=$($SHA_CMD "$so" | awk '{print $1}')
+    [[ -z "$sha" ]] && { error "SHA256 计算失败"; return 1; }
 
     echo ""
     info "发布预览:"
@@ -532,16 +683,29 @@ cmd_release() {
     echo ""
     confirm "确认发布" || { ok "已取消"; return 0; }
 
-    backup_create "pre_$tag" >/dev/null
-    git add . 2>/dev/null || true
-    git commit -m "auto: sync" 2>/dev/null || true
+    # 自动备份
+    local backup_path
+    backup_path=$(backup_create "pre_$tag") || true
+    [[ -n "${backup_path:-}" ]] && debug "已备份到: $backup_path"
+
+    # Git 操作前确保工作区干净（或自动提交）
+    if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
+        info "检测到未提交更改，自动提交..."
+        git add . 2>/dev/null || true
+        git commit -m "auto: sync before release $tag" 2>/dev/null || true
+    fi
     git_sync
 
     json_build_update "$vc" "$url" "$msg_zh" "$msg_en" "$msg_ru" "$force" "$sha"
 
     git add "$API_DIR/update.json"
     git commit -m "release: $tag" || true
-    git tag -a "$tag" -m "release $tag" || { error "打标签失败"; return 1; }
+
+    if ! git tag -a "$tag" -m "release $tag"; then
+        error "打标签失败"
+        return 1
+    fi
+
     git push origin "$(current_branch)" || warn "推送失败"
     git push origin "$tag" || warn "推送标签失败"
 
@@ -561,7 +725,7 @@ cmd_release() {
     [[ "$AUTO_CLEAN" == "true" ]] && clean_old "$tag"
 }
 
-# ---------- 命令: notify (修复版) ----------
+# ---------- 命令: notify (安全增强版) ----------
 cmd_notify() {
     local id="${1:-}"
     local title_zh="${2:-}"
@@ -572,7 +736,7 @@ cmd_notify() {
     local content_ru="${7:-}"
     local force="${8:-}"
 
-    # 预读取现有JSON中的各语言值（作为默认值来源）
+    # 预读取现有JSON中的各语言值
     local last_t_zh="" last_t_en="" last_t_ru=""
     local last_c_zh="" last_c_en="" last_c_ru=""
     if [[ -f "$API_DIR/notify.json" ]]; then
@@ -592,7 +756,7 @@ cmd_notify() {
         [[ -z "$id" ]] && id="$sug"
     fi
 
-    # 修复: 标题各语言默认值优先读取JSON中对应语言的现有值
+    # 标题各语言默认值
     if [[ -z "$title_zh" ]]; then
         ask "通知标题(中文) [默认: ${last_t_zh:-(无)}]: "
         read -r title_zh
@@ -609,7 +773,7 @@ cmd_notify() {
         [[ -z "$title_ru" ]] && title_ru="${last_t_ru:-$title_en}"
     fi
 
-    # 修复: 内容各语言默认值优先读取JSON中对应语言的现有值
+    # 内容各语言默认值
     if [[ -z "$content_zh" ]]; then
         ask "通知内容(中文) [默认: ${last_c_zh:-(无)}]: "
         read -r content_zh
@@ -647,7 +811,7 @@ cmd_clean() {
     local keep_tag="${1:-}"
     if [[ -z "$keep_tag" ]]; then
         [[ -f "$API_DIR/update.json" ]] && keep_tag="v$(json_get "$API_DIR/update.json" "versionCode")"
-        [[ -z "$keep_tag" || "$keep_tag" == "v" ]] && keep_tag=$(git tag --sort=-version:refname 2>/dev/null | grep -E '^v[0-9]+$' | head -1)
+        [[ -z "$keep_tag" || "$keep_tag" == "v" ]] && keep_tag=$(git tag --sort=-version:refname 2>/dev/null | grep -E '^v[0-9]+$' | head -1) || true
         [[ -z "$keep_tag" ]] && { ask "保留的版本标签 (如 v100): "; read -r keep_tag; }
     fi
     clean_old "$keep_tag"
@@ -678,10 +842,9 @@ cmd_backup() {
 }
 
 # ==============================================================================
-# 本地文件一键上传功能
+# 本地文件一键上传功能（安全增强）
 # ==============================================================================
 
-# ---------- 命令: upload ----------
 cmd_upload() {
     local src_update="${1:-}"
     local src_notify="${2:-}"
@@ -699,12 +862,16 @@ cmd_upload() {
 
     if [[ -n "$src_update" || -n "$src_notify" ]]; then
         info "使用命令行指定的文件路径"
-        [[ -n "$src_update" && -f "$src_update" ]] || { error "指定的 update.json 不存在: $src_update"; return 1; }
-        [[ -n "$src_notify" && -f "$src_notify" ]] || { error "指定的 notify.json 不存在: $src_notify"; return 1; }
-        
+        if [[ -n "$src_update" ]]; then
+            _validate_file_path "$src_update" || return 1
+        fi
+        if [[ -n "$src_notify" ]]; then
+            _validate_file_path "$src_notify" || return 1
+        fi
+
         [[ "$mode" == "both" || "$mode" == "update" ]] && cp "$src_update" "$API_DIR/update.json"
         [[ "$mode" == "both" || "$mode" == "notify" ]] && cp "$src_notify" "$API_DIR/notify.json"
-        
+
     else
         info "发现以下候选文件:"
         local i=1
@@ -717,42 +884,48 @@ cmd_upload() {
             files+=("$f")
             i=$((i+1))
         done
-        data "0) 手动输入其他路径"
+        data "0) 手动输入路径"
         echo ""
-        
+
         ask "选择 update.json 来源 [1-$((i-1)) 或 0]: "
         local u_choice
         read -r u_choice
-        
+
         local update_src=""
         if [[ "$u_choice" == "0" ]]; then
             ask "输入 update.json 完整路径: "
             read -r update_src
-        else
+        elif _is_int "$u_choice" && [[ "$u_choice" -ge 1 && "$u_choice" -lt "$i" ]]; then
             update_src="${files[$((u_choice-1))]:-}"
+        else
+            error "无效选择"
+            return 1
         fi
-        
-        [[ -f "$update_src" ]] || { error "文件不存在: $update_src"; return 1; }
-        
+
+        _validate_file_path "$update_src" || return 1
+
         echo ""
         ask "是否同时上传 notify.json? [Y/n]: "
         local also_notify
         read -r also_notify
         also_notify=${also_notify:-Y}
-        
+
         local notify_src=""
         if [[ "$also_notify" =~ ^[Yy]$ ]]; then
             ask "选择 notify.json 来源 [1-$((i-1)) 或 0]: "
             local n_choice
             read -r n_choice
-            
+
             if [[ "$n_choice" == "0" ]]; then
                 ask "输入 notify.json 完整路径: "
                 read -r notify_src
-            else
+            elif _is_int "$n_choice" && [[ "$n_choice" -ge 1 && "$n_choice" -lt "$i" ]]; then
                 notify_src="${files[$((n_choice-1))]:-}"
+            else
+                error "无效选择"
+                return 1
             fi
-            [[ -f "$notify_src" ]] || { error "文件不存在: $notify_src"; return 1; }
+            [[ -n "$notify_src" ]] && _validate_file_path "$notify_src" || return 1
         fi
 
         src_update="$update_src"
@@ -772,8 +945,8 @@ cmd_upload() {
 
     echo ""
     local backup_path
-    backup_path=$(backup_create "pre_upload")
-    [[ $? -eq 0 ]] && info "已备份到: $(basename "$backup_path")"
+    backup_path=$(backup_create "pre_upload") || true
+    [[ -n "${backup_path:-}" ]] && info "已备份到: $(basename "$backup_path")"
 
     echo ""
     confirm "确认上传并推送" || { ok "已取消"; return 0; }
@@ -783,16 +956,16 @@ cmd_upload() {
 
     git add "$API_DIR/update.json" 2>/dev/null || true
     [[ -n "$src_notify" ]] && git add "$API_DIR/notify.json" 2>/dev/null || true
-    
+
     local commit_msg="upload: sync json files"
     [[ -n "$src_notify" ]] || commit_msg="upload: sync update.json"
-    
+
     git commit -m "$commit_msg" 2>/dev/null || true
     git push origin "$(current_branch)" 2>/dev/null || warn "推送失败"
 
     ok "上传完成!"
     info "文件已同步到: $API_DIR/"
-    
+
     if [[ "$AUTO_CLEAN" == "true" ]]; then
         local current_tag
         current_tag="v$(json_get "$API_DIR/update.json" "versionCode")"
@@ -804,7 +977,7 @@ cmd_upload() {
 cmd_sync() {
     log "从远程同步 JSON 文件..."
     git fetch origin "$(current_branch)" 2>/dev/null || { warn "fetch 失败"; return 1; }
-    
+
     local changed=0
     for f in update.json notify.json; do
         if git diff "origin/$(current_branch)" -- "$API_DIR/$f" &>/dev/null; then
@@ -814,7 +987,7 @@ cmd_sync() {
             } || warn "同步失败: $f"
         fi
     done
-    
+
     [[ "$changed" -eq 1 ]] && ok "同步完成" || info "本地已是最新"
 }
 
@@ -822,7 +995,7 @@ cmd_sync() {
 cmd_diff() {
     log "对比本地与远程差异..."
     git fetch origin "$(current_branch)" 2>/dev/null || { warn "fetch 失败"; return 1; }
-    
+
     for f in update.json notify.json; do
         local path="$API_DIR/$f"
         [[ -f "$path" ]] || continue
@@ -832,7 +1005,9 @@ cmd_diff() {
     done
 }
 
-# ---------- GitHub Pages 管理 ----------
+# ==============================================================================
+# GitHub Pages 管理（安全增强）
+# ==============================================================================
 _pages_check_gh() {
     [[ "$HAS_GH" == "1" ]] && return 0
     error "需要 gh CLI 才能管理 GitHub Pages"
@@ -873,7 +1048,7 @@ _pages_disable() {
 
     log "关闭 GitHub Pages (DELETE /repos/$owner/$repo/pages)..."
     local resp
-    resp=$(gh api --method DELETE -H "Accept: application/vnd.github+json" "/repos/$owner/$repo/pages" 2>&1)
+    resp=$(gh api --method DELETE -H "Accept: application/vnd.github+json" "/repos/$owner/$repo/pages" 2>&1) || true
     local rc=$?
 
     if [[ $rc -eq 0 ]]; then
@@ -894,6 +1069,9 @@ _pages_disable() {
 
 _pages_remove_branch() {
     local branch="${1:-gh-pages}"
+    # 验证分支名合法性
+    [[ "$branch" =~ ^[a-zA-Z0-9_.-]+$ ]] || { error "非法分支名: $branch"; return 1; }
+
     info "检查分支: $branch"
     local remote_exists=0
     git ls-remote --heads origin "$branch" 2>/dev/null | grep -q "$branch" && remote_exists=1
@@ -928,7 +1106,7 @@ _pages_clean_deployments() {
     fi
 
     local count
-    count=$(echo "$deps" | wc -l | tr -d ' ')
+    count=$(echo "$deps" | grep -c '^' || echo 0)
     warn "发现 $count 条 github-pages 部署记录"
 
     local MAX_DEPS=200
@@ -964,7 +1142,8 @@ _pages_clean_deployments() {
 }
 
 _pages_clean_files() {
-    local targets=("index.html" "404.html" "CNAME" "_config.yml" "_site" "docs/_site")
+    # 使用白名单模式，更安全
+    local targets=("index.html" "404.html" "CNAME" "_config.yml")
     info "扫描工作区残留站点文件..."
     local found=()
     for t in "${targets[@]}"; do
@@ -974,6 +1153,13 @@ _pages_clean_files() {
         while IFS= read -r f; do
             found+=("$f")
         done < <(find docs -maxdepth 2 -type f \( -name "index.html" -o -name "CNAME" -o -name "_config.yml" \) 2>/dev/null)
+    fi
+    # 额外检查 _site 目录
+    if [[ -d "_site" ]]; then
+        found+=("_site")
+    fi
+    if [[ -d "docs/_site" ]]; then
+        found+=("docs/_site")
     fi
 
     if [[ ${#found[@]} -eq 0 ]]; then
@@ -986,7 +1172,11 @@ _pages_clean_files() {
     done
     confirm "从工作区删除这些文件" && {
         for f in "${found[@]}"; do
-            rm -rf "$f" && ok "已删除: $f" || warn "删除失败: $f"
+            if [[ -d "$f" ]]; then
+                rm -rf "$f" && ok "已删除目录: $f" || warn "删除失败: $f"
+            else
+                rm -f "$f" && ok "已删除: $f" || warn "删除失败: $f"
+            fi
         done
         confirm "是否 git commit 这次清理" && {
             git add -A
@@ -1144,7 +1334,7 @@ show_menu() {
 # ---------- 帮助 ----------
 usage() {
     cat <<'EOF'
-GitHub Backend Manager - Termux 版 (v2.1)
+GitHub Backend Manager - Termux 版 (v3.0)
 
 用法:
     bash manage.sh              进入交互菜单
@@ -1161,7 +1351,7 @@ GitHub Backend Manager - Termux 版 (v2.1)
     clean [tag]         清理旧版本
     backup [action]     备份管理 (list/create/restore)
     pages [sub]         GitHub Pages 关闭与清理
-    
+
     upload [update.json] [notify.json]   一键上传本地JSON
     sync                                 从远程拉取JSON
     diff                                 对比本地与远程差异
