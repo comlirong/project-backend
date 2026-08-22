@@ -1,5 +1,5 @@
 {
-  "id": "010",
+  "id": "011",
   "title": {
     "zh": "通知",
     "en": "Notice",
@@ -10,6 +10,6 @@
     "en": "All current versions are test versions 🚫 Do NOT use main accounts 🚫",
     "ru": "Все версии в настоящее время являются бета-версиями. Использование крупногабаритных размеров категорически запрещено."
   },
-  "force": true,
-  "createdAt": "2026-08-22T19:44:25Z"
+  "force": false,
+  "createdAt": "2026-08-22T19:44:53Z"
 }
