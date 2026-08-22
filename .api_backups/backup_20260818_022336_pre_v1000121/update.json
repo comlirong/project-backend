@@ -1,8 +1,0 @@
-{
-  "versionCode": 1000120,
-  "url": "https://github.com/comlirong/project-backend/releases/download/v1000120/libmain.so",
-  "message": "新增旁路，增强稳定性",
-  "force": false,
-  "sha256": "f6a2bae1d13322054aa5dd4632bda32cf8410cea2afa561b8a2193f1502ecca2",
-  "minOsVersion": 21
-}
