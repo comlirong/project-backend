@@ -1,6 +1,6 @@
 {
-  "versionCode": 1000223,
-  "url": "https://github.com/comlirong/project-backend/releases/download/v1000223/libmain.so",
+  "versionCode": 1000300,
+  "url": "https://github.com/comlirong/project-backend/releases/download/v1000300/libmain.so",
   "message": {
     "zh": "修复已知错误",
     "en": "Fix known errors",
