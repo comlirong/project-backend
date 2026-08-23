@@ -1,12 +1,12 @@
 {
-  "versionCode": 1000216,
-  "url": "https://github.com/comlirong/project-backend/releases/download/v1000216/libmain.so",
+  "versionCode": 1000217,
+  "url": "https://github.com/comlirong/project-backend/releases/download/v1000217/libmain.so",
   "message": {
     "zh": "修复已知错误",
     "en": "Fix known errors",
     "ru": "Исправление известных ошибок"
   },
-  "force": false,
-  "sha256": "fca602d0b2b9d4a1b83c9d2bbd8c1d8fe2850092d9cc6dc15fb07b6ce952a00b",
+  "force": true,
+  "sha256": "b3ce34fe08c0aebcb7445bdd9d9a2f5b09ad3e66e115450a62a19f202a9993ea",
   "minOsVersion": 21
 }
