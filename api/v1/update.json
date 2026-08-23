@@ -1,6 +1,6 @@
 {
-  "versionCode": 2,
-  "url": "https://github.com/comlirong/project-backend/releases/download/v2/libmain.so",
+  "versionCode": 3,
+  "url": "https://github.com/comlirong/project-backend/releases/download/v3/libmain.so",
   "message": {
     "zh": "修复已知错误",
     "en": "Fix known errors",
