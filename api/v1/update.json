@@ -1,12 +1,12 @@
 {
-  "versionCode": 1000309,
-  "url": "https://github.com/comlirong/project-backend/releases/download/v1000309/libmain.so",
+  "versionCode": 1000310,
+  "url": "https://github.com/comlirong/project-backend/releases/download/v1000310/libmain.so",
   "message": {
     "zh": "新增功能，请自行体验",
     "en": "New features, please experience them for yourself.",
     "ru": "Новые функции, пожалуйста, оцените их сами."
   },
   "force": false,
-  "sha256": "32e04831c5124d49d2554753340b5ffbd564581326e200fc995856dc5240732c",
+  "sha256": "4c4081a8cb137aebf709ba6de34b21da48b0102f7f082acc2d3b5a7061c452bc",
   "minOsVersion": 21
 }
