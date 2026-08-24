@@ -1,4 +1,4 @@
-
+#!/usr/bin/env bash
 # ==============================================================================
 # GitHub Backend Manager - Termux 精简版 v4.1
 # 核心功能: release / notify / clean
@@ -22,6 +22,21 @@ VERBOSE=0
 HAS_JQ=0
 HAS_GH=0
 SHA_CMD=""
+
+# ---------- 语言检测 ----------
+LANG_IS_EN=0
+if [[ "${LANG:-}" =~ ^en ]] || [[ "${LC_ALL:-}" =~ ^en ]] || [[ "${LC_MESSAGES:-}" =~ ^en ]]; then
+    LANG_IS_EN=1
+fi
+
+# 翻译函数：根据语言返回对应字符串
+_t() {
+    if [[ "$LANG_IS_EN" -eq 1 ]]; then
+        echo "$2"
+    else
+        echo "$1"
+    fi
+}
 
 # ---------- 颜色 ----------
 if [[ -t 1 ]]; then
@@ -54,21 +69,21 @@ detect_sha() {
 
 check_deps() {
     echo ""
-    log "检查环境..."
+    log "$(_t "检查环境..." "Checking environment...")"
 
     command -v gh &>/dev/null && HAS_GH=1 || HAS_GH=0
     command -v jq &>/dev/null && HAS_JQ=1 || HAS_JQ=0
     SHA_CMD=$(detect_sha)
 
-    [[ "$HAS_GH" == "1" ]] && ok "gh CLI 就绪" || warn "gh CLI 未安装，Release 功能受限"
-    [[ "$HAS_JQ" == "1" ]] && ok "jq 就绪" || info "jq 未安装，使用 Python 回退"
-    [[ -n "$SHA_CMD" ]] && ok "SHA 工具就绪" || warn "未找到 sha256sum/shasum"
+    [[ "$HAS_GH" == "1" ]] && ok "$(_t "gh CLI 就绪" "gh CLI ready")" || warn "$(_t "gh CLI 未安装，Release 功能受限" "gh CLI not installed, Release features limited")"
+    [[ "$HAS_JQ" == "1" ]] && ok "$(_t "jq 就绪" "jq ready")" || info "$(_t "jq 未安装，使用 Python 回退" "jq not installed, using Python fallback")"
+    [[ -n "$SHA_CMD" ]] && ok "$(_t "SHA 工具就绪" "SHA tool ready")" || warn "$(_t "未找到 sha256sum/shasum" "sha256sum/shasum not found")"
 
     if ! git rev-parse --git-dir &>/dev/null; then
-        error "当前目录不是 git 仓库，请先 git init"
+        error "$(_t "当前目录不是 git 仓库，请先 git init" "Not a git repository, please run 'git init' first")"
         exit 1
     fi
-    ok "git 仓库检测通过"
+    ok "$(_t "git 仓库检测通过" "Git repository check passed")"
 
     mkdir -p "$API_DIR"
 }
@@ -78,9 +93,9 @@ _is_int() { [[ "$1" =~ ^[0-9]+$ ]]; }
 
 confirm() {
     [[ "$FORCE_YES" == "1" ]] && return 0
-    [[ ! -t 0 ]] && { warn "非交互环境，操作已跳过"; return 1; }
+    [[ ! -t 0 ]] && { warn "$(_t "非交互环境，操作已跳过" "Non-interactive environment, operation skipped")"; return 1; }
     local r
-    ask "$1 [y/N]: "
+    ask "$(_t "确认" "Confirm")? [y/N]: "
     read -r r
     [[ "$r" =~ ^[Yy]$ ]]
 }
@@ -112,12 +127,12 @@ json_get_lang() {
 
 json_validate() {
     local file="$1"
-    [[ -f "$file" ]] || { error "文件不存在: $file"; return 1; }
+    [[ -f "$file" ]] || { error "$(_t "文件不存在" "File not found"): $file"; return 1; }
     if [[ "$HAS_JQ" == "1" ]]; then
         jq empty "$file" 2>/dev/null && return 0
     fi
     python3 -c "import json; json.load(open(sys.argv[1]))" "$file" 2>/dev/null && return 0
-    error "JSON 格式错误: $file"
+    error "$(_t "JSON 格式错误" "JSON format error"): $file"
     return 1
 }
 
@@ -178,36 +193,36 @@ with open(sys.argv[1], 'w') as f:
 git_sync() {
     local branch
     branch=$(current_branch)
-    info "同步远程 origin/$branch..."
+    info "$(_t "同步远程 origin/$branch..." "Syncing remote origin/$branch...")"
 
     git fetch origin "$branch" 2>/dev/null || git fetch origin 2>/dev/null || {
-        warn "fetch 失败，跳过同步"; return 0;
+        warn "$(_t "fetch 失败，跳过同步" "Fetch failed, skipping sync")"; return 0;
     }
 
     local local_head remote_head
     local_head=$(git rev-parse HEAD)
     remote_head=$(git rev-parse "origin/$branch" 2>/dev/null || true)
 
-    [[ -z "$remote_head" ]] && { warn "远程分支不存在"; return 0; }
-    [[ "$local_head" == "$remote_head" ]] && { ok "已是最新"; return 0; }
+    [[ -z "$remote_head" ]] && { warn "$(_t "远程分支不存在" "Remote branch does not exist")"; return 0; }
+    [[ "$local_head" == "$remote_head" ]] && { ok "$(_t "已是最新" "Already up to date")"; return 0; }
 
     if git merge-base --is-ancestor "origin/$branch" HEAD 2>/dev/null; then
-        info "本地领先，推送中..."
-        git push origin "$branch" || warn "推送失败"
+        info "$(_t "本地领先，推送中..." "Local ahead, pushing...")"
+        git push origin "$branch" || warn "$(_t "推送失败" "Push failed")"
         return 0
     fi
 
     if git merge "origin/$branch" --no-edit -m "auto: sync" 2>/dev/null; then
-        git push origin "$branch" || warn "推送失败"
-        ok "已合并并推送"; return 0
+        git push origin "$branch" || warn "$(_t "推送失败" "Push failed")"
+        ok "$(_t "已合并并推送" "Merged and pushed")"; return 0
     fi
 
-    warn "检测到冲突，保留本地 API 文件..."
+    warn "$(_t "检测到冲突，保留本地 API 文件..." "Conflict detected, keeping local API files...")"
     git checkout --ours "$API_DIR/update.json" "$API_DIR/notify.json" 2>/dev/null || true
     git add "$API_DIR" 2>/dev/null || true
     git commit -m "auto: resolve conflicts" || true
-    git push origin "$branch" || warn "推送失败"
-    ok "冲突已解决"
+    git push origin "$branch" || warn "$(_t "推送失败" "Push failed")"
+    ok "$(_t "冲突已解决" "Conflicts resolved")"
 }
 
 # ---------- 版本推断 ----------
@@ -247,31 +262,31 @@ clean_old() {
     local keep_tag="${1:-}"
     local keep="$KEEP_RELEASES"
 
-    info "获取远程标签..."
+    info "$(_t "获取远程标签..." "Fetching remote tags...")"
     local tags
     tags=$(git ls-remote --tags origin 'refs/tags/v*' 2>/dev/null | awk '{print $2}' | sed 's|refs/tags/||' | grep -E '^v[0-9]+$' | sort -Vr) || true
-    [[ -z "$tags" ]] && { warn "无远程标签"; return; }
+    [[ -z "$tags" ]] && { warn "$(_t "无远程标签" "No remote tags")"; return; }
 
     local -a del=()
     local count=0
     while IFS= read -r tag; do
         [[ -z "$tag" || "$tag" == "$keep_tag" ]] && continue
         count=$((count+1))
-        [[ "$keep" -gt 0 && "$count" -le "$keep" ]] && { ok "保留: $tag"; continue; }
+        [[ "$keep" -gt 0 && "$count" -le "$keep" ]] && { ok "$(_t "保留" "Keeping"): $tag"; continue; }
         del+=("$tag")
     done <<< "$tags"
 
-    [[ ${#del[@]} -eq 0 ]] && { ok "无需清理"; return; }
-    warn "将删除 ${#del[@]} 个版本:"
+    [[ ${#del[@]} -eq 0 ]] && { ok "$(_t "无需清理" "Nothing to clean")"; return; }
+    warn "$(_t "将删除 ${#del[@]} 个版本:" "Will delete ${#del[@]} releases:")"
     for t in "${del[@]}"; do data "$t"; done
-    confirm "确认删除" || { ok "已取消"; return; }
+    confirm "$(_t "确认删除" "Confirm deletion")" || { ok "$(_t "已取消" "Cancelled")"; return; }
 
     for tag in "${del[@]}"; do
         if [[ "$HAS_GH" == "1" ]]; then
             gh release view "$tag" --repo "$REPO" &>/dev/null && \
-                gh release delete "$tag" --repo "$REPO" --yes 2>/dev/null && ok "删 release: $tag" || true
+                gh release delete "$tag" --repo "$REPO" --yes 2>/dev/null && ok "$(_t "删 release" "Deleted release"): $tag" || true
         fi
-        git push origin ":refs/tags/$tag" 2>/dev/null && ok "删 tag: $tag" || warn "删 tag 失败: $tag"
+        git push origin ":refs/tags/$tag" 2>/dev/null && ok "$(_t "删 tag" "Deleted tag"): $tag" || warn "$(_t "删 tag 失败" "Failed to delete tag"): $tag"
     done
 }
 
@@ -280,7 +295,7 @@ clean_old() {
 # ==============================================================================
 
 cmd_init() {
-    log "初始化..."
+    log "$(_t "初始化..." "Initializing...")"
     mkdir -p "$API_DIR"
     [[ -f "$API_DIR/update.json" ]] || cat > "$API_DIR/update.json" <<'EOF'
 {
@@ -301,31 +316,31 @@ EOF
   "createdAt": ""
 }
 EOF
-    ok "初始化完成"
+    ok "$(_t "初始化完成" "Initialization complete")"
 }
 
 cmd_status() {
-    log "项目状态"
-    data "仓库: $REPO"
-    data "分支: $(current_branch)"
-    data "API目录: $API_DIR"
+    log "$(_t "项目状态" "Project status")"
+    data "$(_t "仓库" "Repository"): $REPO"
+    data "$(_t "分支" "Branch"): $(current_branch)"
+    data "$(_t "API目录" "API directory"): $API_DIR"
     echo ""
     [[ -f "$API_DIR/update.json" ]] && {
         info "update.json:"
-        data "  版本: $(json_get "$API_DIR/update.json" "versionCode")"
-        data "  URL: $(json_get "$API_DIR/update.json" "url")"
-        data "  强制: $(json_get "$API_DIR/update.json" "force")"
-        data "  说明(zh): $(json_get_lang "$API_DIR/update.json" "message" "zh")"
+        data "$(_t "版本" "Version"): $(json_get "$API_DIR/update.json" "versionCode")"
+        data "URL: $(json_get "$API_DIR/update.json" "url")"
+        data "$(_t "强制" "Force"): $(json_get "$API_DIR/update.json" "force")"
+        data "$(_t "说明(zh)" "Note(zh)"): $(json_get_lang "$API_DIR/update.json" "message" "zh")"
     }
     [[ -f "$API_DIR/notify.json" ]] && {
         info "notify.json:"
-        data "  ID: #$(json_get "$API_DIR/notify.json" "id")"
-        data "  标题(zh): $(json_get_lang "$API_DIR/notify.json" "title" "zh")"
-        data "  内容(zh): $(json_get_lang "$API_DIR/notify.json" "content" "zh")"
+        data "ID: #$(json_get "$API_DIR/notify.json" "id")"
+        data "$(_t "标题(zh)" "Title(zh)"): $(json_get_lang "$API_DIR/notify.json" "title" "zh")"
+        data "$(_t "内容(zh)" "Content(zh)"): $(json_get_lang "$API_DIR/notify.json" "content" "zh")"
     }
     echo ""
-    data "Git提交: $(git rev-parse --short HEAD 2>/dev/null || echo 'N/A')"
-    data "远程标签: $(git ls-remote --tags origin 2>/dev/null | wc -l | tr -d ' ') 个"
+    data "$(_t "Git提交" "Git commit"): $(git rev-parse --short HEAD 2>/dev/null || echo 'N/A')"
+    data "$(_t "远程标签" "Remote tags"): $(git ls-remote --tags origin 2>/dev/null | wc -l | tr -d ' ') $(_t "个" "")"
 }
 
 cmd_release() {
@@ -340,55 +355,55 @@ cmd_release() {
 
     if [[ -z "$vc" ]]; then
         local sug; sug=$(suggest_version)
-        ask "版本号 [默认: $sug]: "; read -r vc
+        ask "$(_t "版本号" "Version number") [$(_t "默认" "default"): $sug]: "; read -r vc
         [[ -z "$vc" ]] && vc="$sug"
     fi
-    _is_int "$vc" || { error "版本号必须是整数"; return 1; }
+    _is_int "$vc" || { error "$(_t "版本号必须是整数" "Version must be an integer")"; return 1; }
 
     if [[ -z "$so" ]]; then
         local so_files; so_files=$(find_so)
         local count=0
         [[ -n "$so_files" ]] && count=$(echo "$so_files" | grep -c '^' || echo 0)
         if [[ "$count" -eq 1 ]]; then
-            so="$so_files"; info "自动发现 so: $so"
+            so="$so_files"; info "$(_t "自动发现 so" "Auto-discovered so"): $so"
         elif [[ "$count" -gt 1 ]]; then
-            info "发现 $count 个 so:"
+            info "$(_t "发现" "Found") $count $(_t "个 so" "so files"):"
             local -a files=(); local i=1
             while IFS= read -r f; do
                 [[ -n "$f" ]] || continue
                 data "$i) $f ($(du -h "$f" 2>/dev/null | cut -f1))"
                 files+=("$f"); i=$((i+1))
             done <<< "$so_files"
-            data "0) 手动输入"
-            ask "选择 [0-$((i-1))]: "; read -r choice
+            data "0) $(_t "手动输入" "Manual input")"
+            ask "$(_t "选择" "Select") [0-$((i-1))]: "; read -r choice
             if [[ "$choice" == "0" ]]; then
-                ask "so 路径: "; read -r so
+                ask "$(_t "so 路径" "SO file path"): "; read -r so
             elif _is_int "$choice" && [[ "$choice" -ge 1 && "$choice" -lt "$i" ]]; then
                 so="${files[$((choice-1))]}"
             else
-                error "无效选择"; return 1
+                error "$(_t "无效选择" "Invalid choice")"; return 1
             fi
         else
-            ask "so 路径: "; read -r so
+            ask "$(_t "so 路径" "SO file path"): "; read -r so
         fi
     fi
-    [[ -f "$so" ]] || { error "so 文件不存在: $so"; return 1; }
+    [[ -f "$so" ]] || { error "$(_t "so 文件不存在" "SO file not found"): $so"; return 1; }
 
     if [[ -z "$msg_zh" ]]; then
-        ask "更新说明(中文) [默认: ${last_zh:-版本更新}]: "; read -r msg_zh
-        [[ -z "$msg_zh" ]] && msg_zh="${last_zh:-版本更新}"
+        ask "$(_t "更新说明(中文)" "Update notes (Chinese)") [$(_t "默认" "default"): ${last_zh:-$(_t "版本更新" "version update")}]: "; read -r msg_zh
+        [[ -z "$msg_zh" ]] && msg_zh="${last_zh:-$(_t "版本更新" "version update")}"
     fi
     if [[ -z "$msg_en" ]]; then
-        ask "更新说明(英文) [默认: ${last_en:-$msg_zh}]: "; read -r msg_en
+        ask "$(_t "更新说明(英文)" "Update notes (English)") [$(_t "默认" "default"): ${last_en:-$msg_zh}]: "; read -r msg_en
         [[ -z "$msg_en" ]] && msg_en="${last_en:-$msg_zh}"
     fi
     if [[ -z "$msg_ru" ]]; then
-        ask "更新说明(俄文) [默认: ${last_ru:-$msg_en}]: "; read -r msg_ru
+        ask "$(_t "更新说明(俄文)" "Update notes (Russian)") [$(_t "默认" "default"): ${last_ru:-$msg_en}]: "; read -r msg_ru
         [[ -z "$msg_ru" ]] && msg_ru="${last_ru:-$msg_en}"
     fi
 
     if [[ -z "$force" ]]; then
-        ask "强制更新? [y/N]: "; read -r f
+        ask "$(_t "强制更新" "Force update")? [y/N]: "; read -r f
         [[ "$f" =~ ^[Yy]$ ]] && force="true" || force="false"
     fi
 
@@ -396,18 +411,18 @@ cmd_release() {
     local so_name; so_name=$(basename "$so")
     local url="https://github.com/$REPO/releases/download/$tag/$so_name"
     local sha; sha=$($SHA_CMD "$so" | awk '{print $1}')
-    [[ -z "$sha" ]] && { error "SHA256 计算失败"; return 1; }
+    [[ -z "$sha" ]] && { error "$(_t "SHA256 计算失败" "SHA256 calculation failed")"; return 1; }
 
     echo ""
-    info "发布预览:"
-    data "版本: $tag | 文件: $so | SHA256: ${sha:0:16}..."
-    data "说明: zh=$msg_zh | en=$msg_en | ru=$msg_ru"
-    data "强制: $force"
-    confirm "确认发布" || { ok "已取消"; return 0; }
+    info "$(_t "发布预览" "Release preview"):"
+    data "$(_t "版本" "Version"): $tag | $(_t "文件" "File"): $so | SHA256: ${sha:0:16}..."
+    data "$(_t "说明" "Notes"): zh=$msg_zh | en=$msg_en | ru=$msg_ru"
+    data "$(_t "强制" "Force"): $force"
+    confirm "$(_t "确认发布" "Confirm release")" || { ok "$(_t "已取消" "Cancelled")"; return 0; }
 
     # 自动提交未保存更改
     if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
-        info "自动提交未保存更改..."
+        info "$(_t "自动提交未保存更改..." "Auto-committing unsaved changes...")"
         git add . 2>/dev/null || true
         git commit -m "auto: pre-release $tag" 2>/dev/null || true
     fi
@@ -417,17 +432,17 @@ cmd_release() {
 
     git add "$API_DIR/update.json"
     git commit -m "release: $tag" || true
-    git tag -a "$tag" -m "release $tag" || { error "打标签失败"; return 1; }
-    git push origin "$(current_branch)" || warn "推送失败"
-    git push origin "$tag" || warn "推送标签失败"
+    git tag -a "$tag" -m "release $tag" || { error "$(_t "打标签失败" "Tagging failed")"; return 1; }
+    git push origin "$(current_branch)" || warn "$(_t "推送失败" "Push failed")"
+    git push origin "$tag" || warn "$(_t "推送标签失败" "Push tag failed")"
 
     if [[ "$HAS_GH" == "1" ]]; then
         gh release view "$tag" --repo "$REPO" &>/dev/null || \
-            gh release create "$tag" --repo "$REPO" --title "Release $tag" --notes "$msg_en" 2>/dev/null || warn "创建 Release 失败"
-        gh release upload "$tag" "$so" --repo "$REPO" --clobber 2>/dev/null || warn "上传资源失败"
+            gh release create "$tag" --repo "$REPO" --title "Release $tag" --notes "$msg_en" 2>/dev/null || warn "$(_t "创建 Release 失败" "Failed to create Release")"
+        gh release upload "$tag" "$so" --repo "$REPO" --clobber 2>/dev/null || warn "$(_t "上传资源失败" "Failed to upload asset")"
     fi
 
-    ok "发布完成: $tag"
+    ok "$(_t "发布完成" "Release completed"): $tag"
     [[ "$AUTO_CLEAN" == "true" ]] && clean_old "$tag"
 }
 
@@ -446,38 +461,38 @@ cmd_notify() {
 
     if [[ -z "$id" ]]; then
         local sug; sug=$(suggest_notify_id)
-        ask "通知ID [默认: $sug]: "; read -r id
+        ask "$(_t "通知ID" "Notification ID") [$(_t "默认" "default"): $sug]: "; read -r id
         [[ -z "$id" ]] && id="$sug"
     fi
 
     if [[ -z "$title_zh" ]]; then
-        ask "标题(中文) [默认: ${lt_zh:-(无)}]: "; read -r title_zh
+        ask "$(_t "标题(中文)" "Title (Chinese)") [$(_t "默认" "default"): ${lt_zh:-$(_t "(无)" "(none)")}]: "; read -r title_zh
         [[ -z "$title_zh" ]] && title_zh="$lt_zh"
     fi
     if [[ -z "$title_en" ]]; then
-        ask "标题(英文) [默认: ${lt_en:-$title_zh}]: "; read -r title_en
+        ask "$(_t "标题(英文)" "Title (English)") [$(_t "默认" "default"): ${lt_en:-$title_zh}]: "; read -r title_en
         [[ -z "$title_en" ]] && title_en="${lt_en:-$title_zh}"
     fi
     if [[ -z "$title_ru" ]]; then
-        ask "标题(俄文) [默认: ${lt_ru:-$title_en}]: "; read -r title_ru
+        ask "$(_t "标题(俄文)" "Title (Russian)") [$(_t "默认" "default"): ${lt_ru:-$title_en}]: "; read -r title_ru
         [[ -z "$title_ru" ]] && title_ru="${lt_ru:-$title_en}"
     fi
 
     if [[ -z "$content_zh" ]]; then
-        ask "内容(中文) [默认: ${lc_zh:-(无)}]: "; read -r content_zh
+        ask "$(_t "内容(中文)" "Content (Chinese)") [$(_t "默认" "default"): ${lc_zh:-$(_t "(无)" "(none)")}]: "; read -r content_zh
         [[ -z "$content_zh" ]] && content_zh="$lc_zh"
     fi
     if [[ -z "$content_en" ]]; then
-        ask "内容(英文) [默认: ${lc_en:-$content_zh}]: "; read -r content_en
+        ask "$(_t "内容(英文)" "Content (English)") [$(_t "默认" "default"): ${lc_en:-$content_zh}]: "; read -r content_en
         [[ -z "$content_en" ]] && content_en="${lc_en:-$content_zh}"
     fi
     if [[ -z "$content_ru" ]]; then
-        ask "内容(俄文) [默认: ${lc_ru:-$content_en}]: "; read -r content_ru
+        ask "$(_t "内容(俄文)" "Content (Russian)") [$(_t "默认" "default"): ${lc_ru:-$content_en}]: "; read -r content_ru
         [[ -z "$content_ru" ]] && content_ru="${lc_ru:-$content_en}"
     fi
 
     if [[ -z "$force" ]]; then
-        ask "强制显示? [y/N]: "; read -r f
+        ask "$(_t "强制显示" "Force show")? [y/N]: "; read -r f
         [[ "$f" =~ ^[Yy]$ ]] && force="true" || force="false"
     fi
 
@@ -485,15 +500,15 @@ cmd_notify() {
 
     git add "$API_DIR/notify.json" 2>/dev/null || true
     git commit -m "notify: $id" 2>/dev/null || true
-    git push origin "$(current_branch)" 2>/dev/null || warn "推送失败"
-    ok "通知已发布: #$id"
+    git push origin "$(current_branch)" 2>/dev/null || warn "$(_t "推送失败" "Push failed")"
+    ok "$(_t "通知已发布" "Notification published"): #$id"
 }
 
 cmd_clean() {
     local keep_tag="${1:-}"
     [[ -z "$keep_tag" && -f "$API_DIR/update.json" ]] && keep_tag="v$(json_get "$API_DIR/update.json" "versionCode")"
     [[ -z "$keep_tag" || "$keep_tag" == "v" ]] && keep_tag=$(git tag --sort=-version:refname 2>/dev/null | grep -E '^v[0-9]+$' | head -1) || true
-    [[ -z "$keep_tag" ]] && { ask "保留标签 (如 v100): "; read -r keep_tag; }
+    [[ -z "$keep_tag" ]] && { ask "$(_t "保留标签" "Keep tag") (如 v100): "; read -r keep_tag; }
     clean_old "$keep_tag"
 }
 
@@ -501,17 +516,17 @@ cmd_clean() {
 show_menu() {
     while true; do
         echo ""
-        log "GitHub Backend Manager v4.1"
-        data "仓库: $REPO  |  分支: $(current_branch)"
+        log "$(_t "GitHub Backend Manager v4.1" "GitHub Backend Manager v4.1")"
+        data "$(_t "仓库" "Repo"): $REPO  |  $(_t "分支" "Branch"): $(current_branch)"
         echo ""
-        echo "  [1] 发布新版本 (release)"
-        echo "  [2] 发布通知 (notify)"
-        echo "  [3] 清理旧版本 (clean)"
-        echo "  [4] 查看状态 (status)"
-        echo "  [5] 初始化 (init)"
-        echo "  [0] 退出"
+        echo "  $(_t "[1] 发布新版本 (release)" "[1] Release new version")"
+        echo "  $(_t "[2] 发布通知 (notify)" "[2] Publish notification")"
+        echo "  $(_t "[3] 清理旧版本 (clean)" "[3] Clean old versions")"
+        echo "  $(_t "[4] 查看状态 (status)" "[4] View status")"
+        echo "  $(_t "[5] 初始化 (init)" "[5] Initialize")"
+        echo "  $(_t "[0] 退出" "[0] Exit")"
         echo ""
-        ask "请选择 [0-5]: "
+        ask "$(_t "请选择" "Please select") [0-5]: "
         local c; read -r c
         echo ""
         case "$c" in
@@ -520,16 +535,40 @@ show_menu() {
             3) cmd_clean ;;
             4) cmd_status ;;
             5) cmd_init ;;
-            0|q) log "再见!"; break ;;
-            *) warn "无效选择" ;;
+            0|q) log "$(_t "再见!" "Goodbye!")"; break ;;
+            *) warn "$(_t "无效选择" "Invalid choice")" ;;
         esac
         echo ""
-        read -rp "按 Enter 继续..."
+        read -rp "$(_t "按 Enter 继续..." "Press Enter to continue...")"
     done
 }
 
 usage() {
-    cat <<'EOF'
+    if [[ "$LANG_IS_EN" -eq 1 ]]; then
+        cat <<'EOF'
+GitHub Backend Manager v4.1 (minimal)
+
+Usage:
+    bash manage.sh              Interactive menu
+    bash manage.sh <command> [args...]
+
+Commands:
+    init                Initialize environment
+    status              Show status
+    release [v] [so] [msg_zh] [msg_en] [msg_ru] [force]
+                        Publish a new version
+    notify [id] [title_zh] [title_en] [title_ru]
+           [content_zh] [content_en] [content_ru] [force]
+                        Publish a notification
+    clean [tag]         Clean old versions
+
+Options:
+    -y                  Auto confirm
+    -v                  Verbose output
+    -h                  Show this help
+EOF
+    else
+        cat <<'EOF'
 GitHub Backend Manager v4.1 (极简版)
 
 用法:
@@ -551,6 +590,7 @@ GitHub Backend Manager v4.1 (极简版)
     -v                  调试信息
     -h                  显示帮助
 EOF
+    fi
 }
 
 parse_opts() {
@@ -560,7 +600,7 @@ parse_opts() {
             -v) VERBOSE=1; shift ;;
             -h|--help) usage; exit 0 ;;
             --) shift; break ;;
-            -*) warn "未知选项: $1"; shift ;;
+            -*) warn "$(_t "未知选项" "Unknown option"): $1"; shift ;;
             *) break ;;
         esac
     done
@@ -586,7 +626,7 @@ main() {
         notify|n)   cmd_notify "${ARGS[@]}" ;;
         clean|c)    cmd_clean "${ARGS[@]}" ;;
         help)       usage ;;
-        *)          error "未知命令: $CMD"; usage ;;
+        *)          error "$(_t "未知命令" "Unknown command"): $CMD"; usage ;;
     esac
 }
 
